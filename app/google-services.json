@@ -1,0 +1,39 @@
+{
+  "project_info": {
+    "project_number": "576654187241",
+    "project_id": "campusboard-16569",
+    "storage_bucket": "campusboard-16569.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:576654187241:android:b4f70bca9398547ea9ae78",
+        "android_client_info": {
+          "package_name": "com.example.campusboard"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "576654187241-iph29tmauiqti0oeupuu5pqj7p7ctjt5.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDhl99cKuSrbL38p2LZKkN4gRKGAfJMoJU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "576654187241-iph29tmauiqti0oeupuu5pqj7p7ctjt5.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
