@@ -49,6 +49,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -56,10 +58,12 @@ import androidx.core.app.NotificationCompat
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.ui.graphics.drawscope.Stroke
+import com.example.campusboard.presentation.auth.GoogleSignUpPasswordDialog
 import com.example.campusboard.domain.model.Post
 import com.example.campusboard.domain.model.PostType
 import com.example.campusboard.domain.model.Role
 import com.example.campusboard.domain.model.Community
+import com.example.campusboard.domain.model.User
 import com.example.campusboard.CampusBoardApp
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
@@ -94,6 +98,38 @@ fun GridBackground(modifier: Modifier = Modifier) {
     }
 }
 
+@Composable
+private fun PermissionSwitch(
+    permission: String,
+    label: String,
+    state: BoardState,
+    viewModel: BoardViewModel,
+    onHelpClick: (String) -> Unit
+) {
+    val user = state.userToManagePermissions ?: return
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Switch(
+            checked = user.safePermissions().contains(permission),
+            onCheckedChange = { viewModel.onEvent(BoardEvent.ToggleGlobalPermission(user.id, permission)) },
+            colors = SwitchDefaults.colors(checkedThumbColor = Color(0xFF0D47A1))
+        )
+        Spacer(Modifier.width(12.dp))
+        Text(
+            label,
+            modifier = Modifier.weight(1f).clickable { viewModel.onEvent(BoardEvent.ToggleGlobalPermission(user.id, permission)) },
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.Medium
+        )
+        IconButton(onClick = { onHelpClick(permission) }) {
+            Icon(Icons.AutoMirrored.Filled.HelpOutline, null, modifier = Modifier.size(18.dp), tint = Color(0xFF64748B))
+        }
+    }
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -122,6 +158,8 @@ fun BoardScreen(viewModel: BoardViewModel) {
             "can_manage_permissions" to "Customize specific administrative capabilities for other admins.",
             "can_manage_requests_globally" to "Review and handle join requests for any community on the platform.",
             "can_approve_posts_globally" to "Review and approve pending posts for all communities, ensuring content quality.",
+            "can_approve_community_posts" to "Allows reviewing and approving posts within the communities managed by this admin.",
+            "can_manage_community_requests" to "Allows reviewing and handling join requests for the communities managed by this admin.",
             "can_manage_bypass_approval" to "Designate trustworthy users who can post without needing admin approval first.",
             "can_delete_any_post" to "Removes any post from the board. Use for moderating inappropriate content.",
             "can_delete_community_posts" to "Allows removing posts within the communities managed by this admin.",
@@ -148,6 +186,14 @@ fun BoardScreen(viewModel: BoardViewModel) {
     }
 
     val availableCommunities = state.communities.map { it.name }
+
+    if (state.showSetPasswordDialog) {
+        GoogleSignUpPasswordDialog(
+            isLoading = state.isLoading,
+            onConfirm = { viewModel.onEvent(BoardEvent.SetPassword(it)) },
+            onDismiss = { viewModel.onEvent(BoardEvent.DismissSetPasswordDialog) }
+        )
+    }
 
     if (state.communityWarning != null) {
         val user = state.users.find { it.id == state.communityWarning.first }
@@ -227,16 +273,14 @@ fun BoardScreen(viewModel: BoardViewModel) {
         )
     }
 
-    if (state.userToManagePermissions != null) {
+    state.userToManagePermissions?.let { targetUser ->
         AlertDialog(
             onDismissRequest = { viewModel.onEvent(BoardEvent.ClosePermissionManager) },
-            title = { 
-                val canManageGlobal = state.currentUser?.role == Role.SUPER_ADMIN || 
-                                     state.currentUser?.safePermissions()?.contains("can_manage_permissions") == true
+            title = {
                 Column {
                     Text("Manage Permissions", fontWeight = FontWeight.ExtraBold)
                     Text(
-                        state.userToManagePermissions.username, 
+                        targetUser.username,
                         style = MaterialTheme.typography.bodySmall,
                         color = Color(0xFF334155)
                     )
@@ -244,11 +288,11 @@ fun BoardScreen(viewModel: BoardViewModel) {
             },
             text = {
                 val hasCommunityManagePerm = state.currentUser?.safePermissions()?.contains("can_manage_community_users") == true
-                val isTargetUser = state.userToManagePermissions.role == Role.USER
-                
-                val canManageGlobal = state.currentUser?.role == Role.SUPER_ADMIN || 
+                val isTargetUser = targetUser.role == Role.USER
+
+                val canManageGlobal = state.currentUser?.role == Role.SUPER_ADMIN ||
                                      state.currentUser?.safePermissions()?.contains("can_manage_permissions") == true
-                val canManageRoles = state.currentUser?.role == Role.SUPER_ADMIN || 
+                val canManageRoles = state.currentUser?.role == Role.SUPER_ADMIN ||
                                    state.currentUser?.safePermissions()?.contains("can_manage_roles") == true ||
                                    (hasCommunityManagePerm && isTargetUser)
                 val canManageBypass = state.currentUser?.role == Role.SUPER_ADMIN ||
@@ -257,7 +301,7 @@ fun BoardScreen(viewModel: BoardViewModel) {
 
                 LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 450.dp)) {
                     // 1. GLOBAL PERMISSIONS - Only for Superadmin managing an Admin
-                    if (state.currentUser?.role == Role.SUPER_ADMIN && state.userToManagePermissions.role == Role.ADMIN) {
+                    if (state.currentUser?.role == Role.SUPER_ADMIN && targetUser.role == Role.ADMIN) {
                         item {
                             Text(
                                 "GLOBAL PERMISSIONS",
@@ -267,42 +311,36 @@ fun BoardScreen(viewModel: BoardViewModel) {
                             )
                             Spacer(Modifier.height(8.dp))
 
-                            val globalPerms = listOf(
-                                "can_create_community" to "Can create communities",
-                                "can_edit_any_community" to "Can edit community details",
-                                "can_manage_roles" to "Can manage user roles",
-                                "can_manage_permissions" to "Can manage permissions",
-                                "can_manage_requests_globally" to "Can manage all join requests",
-                                "can_approve_posts_globally" to "Can approve all posts",
-                                "can_manage_bypass_approval" to "Can manage bypass settings",
-                                "can_delete_any_post" to "Can delete any post",
-                                "can_send_global_broadcast" to "Can send global broadcasts",
-                                "can_manage_community_users" to "Can manage community users"
+                            val platformPerms = listOf(
+                                "can_create_community" to "Create New Communities",
+                                "can_edit_any_community" to "Edit All Community Details",
+                                "can_manage_roles" to "Promote/Demote Admins",
+                                "can_manage_permissions" to "Full Permission Control",
+                                "can_manage_requests_globally" to "Manage All Join Requests",
+                                "can_approve_posts_globally" to "Approve All Pending Posts",
+                                "can_delete_any_post" to "Delete Any Post (Global)",
+                                "can_send_global_broadcast" to "Send Global Broadcasts"
                             )
 
-                            globalPerms.forEach { (perm, label) ->
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clickable {
-                                            viewModel.onEvent(BoardEvent.ToggleGlobalPermission(state.userToManagePermissions.id, perm))
-                                        }
-                                        .padding(vertical = 4.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Switch(
-                                        checked = state.userToManagePermissions.safePermissions().contains(perm),
-                                        onCheckedChange = {
-                                            viewModel.onEvent(BoardEvent.ToggleGlobalPermission(state.userToManagePermissions.id, perm))
-                                        },
-                                        colors = SwitchDefaults.colors(checkedThumbColor = Color(0xFF0D47A1))
-                                    )
-                                    Spacer(Modifier.width(12.dp))
-                                    Text(label, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
-                                    IconButton(onClick = { helpTextToShow = permissionDescriptions[perm] }) {
-                                        Icon(Icons.AutoMirrored.Filled.HelpOutline, null, modifier = Modifier.size(18.dp), tint = Color(0xFF64748B))
-                                    }
-                                }
+                            val communityPerms = listOf(
+                                "can_manage_community_users" to "Manage Users in Community",
+                                "can_approve_community_posts" to "Approve Community Posts",
+                                "can_manage_community_requests" to "Manage Community Requests",
+                                "can_delete_community_posts" to "Delete Community Posts",
+                                "can_manage_bypass_approval" to "Manage Community Bypass"
+                            )
+
+                            Text("PLATFORM-WIDE CONTROL", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = Color(0xFF64748B))
+                            Spacer(Modifier.height(8.dp))
+                            platformPerms.forEach { (perm, label) -> 
+                                PermissionSwitch(perm, label, state, viewModel) { helpTextToShow = permissionDescriptions[it] }
+                            }
+
+                            Spacer(Modifier.height(16.dp))
+                            Text("LOCAL MODERATION (Assigned Boards)", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = Color(0xFF64748B))
+                            Spacer(Modifier.height(8.dp))
+                            communityPerms.forEach { (perm, label) -> 
+                                PermissionSwitch(perm, label, state, viewModel) { helpTextToShow = permissionDescriptions[it] }
                             }
 
                             Spacer(Modifier.height(16.dp))
@@ -325,26 +363,24 @@ fun BoardScreen(viewModel: BoardViewModel) {
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clickable {
-                                        viewModel.onEvent(BoardEvent.ToggleUserSuspension(state.userToManagePermissions.id))
-                                    }
                                     .padding(vertical = 4.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Switch(
-                                    checked = state.userToManagePermissions.isSuspended,
-                                    onCheckedChange = {
-                                        viewModel.onEvent(BoardEvent.ToggleUserSuspension(state.userToManagePermissions.id))
+                                    checked = targetUser.isSuspended,
+                                    onCheckedChange = { isChecked ->
+                                        viewModel.onEvent(BoardEvent.ToggleUserSuspension(targetUser.id))
                                     },
                                     colors = SwitchDefaults.colors(checkedThumbColor = Color(0xFFEF4444))
                                 )
                                 Spacer(Modifier.width(12.dp))
                                 Text(
-                                    if (state.userToManagePermissions.isSuspended) "Account Suspended" else "Account Active",
-                                    modifier = Modifier.weight(1f),
+                                    if (targetUser.isSuspended) "Account Suspended" else "Account Active",
+                                    modifier = Modifier.weight(1f)
+                                        .clickable { viewModel.onEvent(BoardEvent.ToggleUserSuspension(targetUser.id)) },
                                     style = MaterialTheme.typography.bodyMedium,
                                     fontWeight = FontWeight.Medium,
-                                    color = if (state.userToManagePermissions.isSuspended) Color(0xFFEF4444) else Color(0xFF10B981)
+                                    color = if (targetUser.isSuspended) Color(0xFFEF4444) else Color(0xFF10B981)
                                 )
                                 IconButton(onClick = { helpTextToShow = permissionDescriptions["is_suspended"] }) {
                                     Icon(Icons.AutoMirrored.Filled.HelpOutline, null, modifier = Modifier.size(18.dp), tint = Color(0xFF64748B))
@@ -367,44 +403,53 @@ fun BoardScreen(viewModel: BoardViewModel) {
                         )
                         Spacer(Modifier.height(8.dp))
 
-                        val filteredJoined = state.userToManagePermissions.safeJoined().filter { it != "General" }
-                            filteredJoined.forEach { communityName ->
-                                val perm = "bypass_approval_$communityName"
-                                val hasPerm = state.userToManagePermissions.safePermissions().contains(perm)
-                                val canManageThisBypass = canManageGlobal || 
-                                                        state.currentUser?.safePermissions()?.contains("can_manage_bypass_approval") == true ||
-                                                        (hasCommunityManagePerm && state.currentUser?.safeManaged()?.contains(communityName) == true)
+                        val displayComms = targetUser.safeJoined().filter { it != "General" }.distinct()
+                        
+                        displayComms.forEach { communityName ->
+                            val isManaged = targetUser.role == Role.ADMIN && targetUser.safeManaged().contains(communityName)
+                            val perm = "bypass_approval_$communityName"
+                            val hasPerm = targetUser.safePermissions().contains(perm) || isManaged
+                            
+                            val canManageThisBypass = canManageGlobal || 
+                                                    state.currentUser?.safePermissions()?.contains("can_manage_bypass_approval") == true
 
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .then(if (canManageThisBypass) Modifier.clickable {
-                                            viewModel.onEvent(BoardEvent.ToggleGlobalPermission(state.userToManagePermissions.id, perm))
-                                        } else Modifier)
-                                        .padding(vertical = 4.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Switch(
-                                        checked = hasPerm,
-                                        enabled = canManageThisBypass,
-                                        onCheckedChange = {
-                                            viewModel.onEvent(BoardEvent.ToggleGlobalPermission(state.userToManagePermissions.id, perm))
-                                        },
-                                        colors = SwitchDefaults.colors(checkedThumbColor = Color(0xFF0D47A1))
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Switch(
+                                    checked = hasPerm,
+                                    enabled = canManageThisBypass && !isManaged,
+                                    onCheckedChange = { 
+                                        viewModel.onEvent(BoardEvent.ToggleGlobalPermission(targetUser.id, perm))
+                                    },
+                                    colors = SwitchDefaults.colors(checkedThumbColor = if (isManaged) Color(0xFF10B981) else Color(0xFF0D47A1))
+                                )
+                                Spacer(Modifier.width(12.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        "Bypass approval in $communityName",
+                                        style = MaterialTheme.typography.bodyMedium, 
+                                        fontWeight = FontWeight.Medium,
+                                        color = if (isManaged) Color(0xFF059669) else Color.Unspecified
                                     )
-                                    Spacer(Modifier.width(12.dp))
-                                    Text("Bypass approval in $communityName", modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
-                                    IconButton(onClick = { helpTextToShow = permissionDescriptions["bypass_approval"] }) {
-                                        Icon(Icons.AutoMirrored.Filled.HelpOutline, null, modifier = Modifier.size(18.dp), tint = Color(0xFF64748B))
+                                    if (isManaged) {
+                                        Text("Automatic (Community Manager)", style = MaterialTheme.typography.labelSmall, color = Color(0xFF10B981))
                                     }
                                 }
+                                IconButton(onClick = { helpTextToShow = permissionDescriptions["bypass_approval"] }) {
+                                    Icon(Icons.AutoMirrored.Filled.HelpOutline, null, modifier = Modifier.size(18.dp), tint = Color(0xFF64748B))
+                                }
                             }
+                        }
 
-                        if (filteredJoined.isEmpty()) {
+                        if (targetUser.safeJoined().isEmpty()) {
                             Text("User hasn't joined any restricted communities", style = MaterialTheme.typography.bodySmall, color = Color(0xFF64748B), fontStyle = androidx.compose.ui.text.font.FontStyle.Italic)
                         }
 
-                        if (canManageRoles && state.userToManagePermissions.role == Role.ADMIN) {
+                        if (canManageRoles && targetUser.role == Role.ADMIN) {
                             Spacer(Modifier.height(16.dp))
                             HorizontalDivider(color = Color(0xFFF1F5F9))
                             Spacer(Modifier.height(16.dp))
@@ -429,27 +474,27 @@ fun BoardScreen(viewModel: BoardViewModel) {
                         }
                     }
                     
-                    if (canManageRoles && state.userToManagePermissions.role == Role.ADMIN) {
+                    if (canManageRoles && targetUser.role == Role.ADMIN) {
                         items(state.communities) { community ->
-                            val isManaged = state.userToManagePermissions.safeManaged().contains(community.name)
+                            val isManaged = targetUser.safeManaged().contains(community.name)
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clickable { 
-                                        viewModel.onEvent(BoardEvent.RequestToggleCommunityManagement(state.userToManagePermissions.id, community.name))
-                                    }
                                     .padding(vertical = 12.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Checkbox(
                                     checked = isManaged,
                                     onCheckedChange = { 
-                                        viewModel.onEvent(BoardEvent.RequestToggleCommunityManagement(state.userToManagePermissions.id, community.name))
+                                        viewModel.onEvent(BoardEvent.RequestToggleCommunityManagement(targetUser.id, community.name))
                                     },
                                     colors = CheckboxDefaults.colors(checkedColor = Color(0xFF0D47A1))
                                 )
                                 Spacer(Modifier.width(8.dp))
-                                Column {
+                                Column(
+                                    modifier = Modifier.weight(1f)
+                                        .clickable { viewModel.onEvent(BoardEvent.RequestToggleCommunityManagement(targetUser.id, community.name)) }
+                                ) {
                                     Text(community.name, fontWeight = FontWeight.Bold)
                                     Text(community.description, style = MaterialTheme.typography.bodySmall, color = Color(0xFF334155), maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 }
@@ -1708,47 +1753,6 @@ fun CreatePostContent(viewModel: BoardViewModel) {
         modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Spacer(modifier = Modifier.height(8.dp))
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable { isPreviewExpanded = !isPreviewExpanded }
-                .padding(vertical = 8.dp),
-            horizontalArrangement = Arrangement.Center,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                "PREVIEW", 
-                style = MaterialTheme.typography.labelSmall, 
-                fontWeight = FontWeight.Black, 
-                color = Color(0xFF334155),
-                letterSpacing = 2.sp
-            )
-            Icon(
-                if (isPreviewExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                contentDescription = null,
-                modifier = Modifier.size(16.dp),
-                tint = Color(0xFF64748B)
-            )
-        }
-        
-        AnimatedVisibility(visible = isPreviewExpanded) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                PostCard(
-                    post = Post(
-                        title = title.ifBlank { "Title Preview" },
-                        content = content.ifBlank { "Your content will appear here..." },
-                        type = selectedType,
-                        color = selectedColor.value.toLong(),
-                        timestamp = selectedTimestamp,
-                        author = viewModel.state.value.currentUser?.username ?: "You",
-                        community = selectedCommunityTarget
-                    )
-                )
-                Spacer(modifier = Modifier.height(16.dp))
-            }
-        }
-        
         Column(
             modifier = Modifier
                 .weight(1f)
@@ -1756,6 +1760,49 @@ fun CreatePostContent(viewModel: BoardViewModel) {
                 .padding(bottom = 16.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { isPreviewExpanded = !isPreviewExpanded }
+                    .padding(vertical = 8.dp),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    "PREVIEW", 
+                    style = MaterialTheme.typography.labelSmall, 
+                    fontWeight = FontWeight.Black, 
+                    color = Color(0xFF334155),
+                    letterSpacing = 2.sp
+                )
+                Icon(
+                    if (isPreviewExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp),
+                    tint = Color(0xFF64748B)
+                )
+            }
+            
+            AnimatedVisibility(visible = isPreviewExpanded) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    PostCard(
+                        post = Post(
+                            id = "preview_id",
+                            title = title.ifBlank { "Title Preview" },
+                            content = content.ifBlank { "Your content will appear here..." },
+                            type = selectedType,
+                            color = selectedColor.value.toLong(),
+                            timestamp = selectedTimestamp,
+                            author = viewModel.state.value.currentUser?.username ?: "You",
+                            community = selectedCommunityTarget
+                        ),
+                        isPreview = true
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                }
+            }
+            
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(containerColor = Color.White),
@@ -2195,27 +2242,29 @@ fun PostCard(
     post: Post, 
     onDelete: (() -> Unit)? = null, 
     onClick: (() -> Unit)? = null,
-    isDialog: Boolean = false
+    isDialog: Boolean = false,
+    isPreview: Boolean = false
 ) {
     val seed = post.id.hashCode().toLong()
-    val rotation = remember(seed, isDialog) { if (!isDialog) (Random(seed).nextFloat() * 12f) - 6f else 0f }
-    val tiltX = remember(seed, isDialog) { if (!isDialog) (Random(seed + 1).nextFloat() * 4f) - 2f else 0f }
-    val tiltY = remember(seed, isDialog) { if (!isDialog) (Random(seed + 2).nextFloat() * 4f) - 2f else 0f }
+    val rotation = remember(seed, isDialog, isPreview) { if (!isDialog && !isPreview) (Random(seed).nextFloat() * 12f) - 6f else 0f }
+    val tiltX = remember(seed, isDialog, isPreview) { if (!isDialog && !isPreview) (Random(seed + 1).nextFloat() * 4f) - 2f else 0f }
+    val tiltY = remember(seed, isDialog, isPreview) { if (!isDialog && !isPreview) (Random(seed + 2).nextFloat() * 4f) - 2f else 0f }
     
     val pinRotation = remember(seed) { (Random(seed + 3).nextFloat() * 40f) - 20f }
-    val noteStyle = remember(seed) { Random(seed + 4).nextInt(4) }
-    val heightOffset = remember(seed) { (Random(seed + 5).nextFloat() * 120f - 40f).dp }
-    val widthVariation = remember(seed) { (Random(seed + 6).nextFloat() * 16f - 8f).dp }
-    val contentPaddingVariation = remember(seed) { (Random(seed + 7).nextFloat() * 12f).dp }
-    val titleRotation = remember(seed, isDialog) { if (isDialog) 0f else (Random(seed + 8).nextFloat() * 4f - 2f) }
+    val noteStyle = remember(seed, isPreview) { if (isPreview) 0 else Random(seed + 4).nextInt(4) }
+    val heightOffset = remember(seed, isPreview) { if (isPreview) 0.dp else (Random(seed + 5).nextFloat() * 120f - 40f).dp }
+    val widthVariation = remember(seed, isPreview) { if (isPreview) 0.dp else (Random(seed + 6).nextFloat() * 16f - 8f).dp }
+    val contentPaddingVariation = remember(seed, isPreview) { if (isPreview) 0.dp else (Random(seed + 7).nextFloat() * 12f).dp }
+    val titleRotation = remember(seed, isDialog, isPreview) { if (isDialog || isPreview) 0f else (Random(seed + 8).nextFloat() * 4f - 2f) }
     val curlAmount = remember(seed) { (Random(seed + 9).nextFloat() * 10f + 5f) }
     var isExpanded by remember { mutableStateOf(isDialog) }
     
     val density = LocalDensity.current
 
     // Slightly vary the base color for more natural feel
-    val baseColor = remember(post.color, post.id) {
+    val baseColor = remember(post.color, post.id, isPreview) {
         val c = Color(post.color.toULong())
+        if (isPreview) return@remember c
         val r = Random(seed + 10)
         val factor = 0.92f + (r.nextFloat() * 0.16f) // +/- 8%
         Color(

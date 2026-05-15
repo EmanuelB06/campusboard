@@ -16,8 +16,9 @@ class CampusBoardApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        android.util.Log.d("FCM_TEST", "CampusBoardApp started - Logging is working!")
         
-        authRepository = AuthRepositoryImpl()
+        authRepository = AuthRepositoryImpl(this)
         boardRepository = BoardRepositoryImpl()
         notificationHelper = NotificationHelper(this)
 

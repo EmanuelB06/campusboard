@@ -10,6 +10,7 @@ import com.example.campusboard.domain.repository.BoardRepository
 import com.example.campusboard.domain.use_case.*
 import com.example.campusboard.domain.util.Resource
 import com.example.campusboard.util.NotificationHelper
+import com.google.firebase.messaging.FirebaseMessaging
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
@@ -48,10 +49,68 @@ class BoardViewModel(
     
     private var pendingRoleUpdate: Pair<String, Role>? = null
 
+    private val knownPostIds = mutableSetOf<String>()
+    private var isFirstPostLoad = true
+
     init {
         observeCurrentUser()
         getCommunities()
         getPosts(state.value.selectedCommunity)
+        checkIfPasswordRequired()
+        setupPostNotifications()
+        
+        // Always subscribe to general topic (lowercase)
+        FirebaseMessaging.getInstance().subscribeToTopic("all_users")
+        FirebaseMessaging.getInstance().subscribeToTopic("general")
+    }
+
+    private fun setupPostNotifications() {
+        // Observe all approved posts to notify users of new content
+        boardRepository.getAllApprovedPosts()
+            .onEach { posts ->
+                val currentUser = state.value.currentUser ?: return@onEach
+                
+                // On first load, we remember existing posts so we only notify for TRULY new ones
+                if (isFirstPostLoad) {
+                    knownPostIds.addAll(posts.map { it.id })
+                    isFirstPostLoad = false
+                    return@onEach
+                }
+
+                // Filter for posts we haven't seen yet
+                val newPosts = posts.filter { post ->
+                    val isNew = !knownPostIds.contains(post.id)
+                    val isNotMe = post.author != currentUser.username
+                    val isInMyCommunity = post.isBroadcast || 
+                                         post.community.equals("General", ignoreCase = true) || 
+                                         currentUser.safeJoined().any { it.equals(post.community, ignoreCase = true) }
+                    
+                    isNew && isNotMe && isInMyCommunity
+                }.sortedBy { it.timestamp }
+
+                newPosts.forEach { post ->
+                    knownPostIds.add(post.id)
+                    
+                    // MATCHING YOUR SNIPPET STYLE:
+                    val displayCommunity = if (post.isBroadcast) "Global Board" else post.community
+                    val snippetContent = if (post.content.length > 50) post.content.substring(0, 50) + "..." else post.content
+                    
+                    notificationHelper.showNotification(
+                        title = "New Note in $displayCommunity",
+                        message = "${post.author}: $snippetContent"
+                    )
+                }
+            }
+            .launchIn(viewModelScope)
+    }
+
+
+    private fun checkIfPasswordRequired() {
+        viewModelScope.launch {
+            if (authRepository.isGoogleOnly()) {
+                _state.value = _state.value.copy(showSetPasswordDialog = true)
+            }
+        }
     }
 
     private fun observeCurrentUser() {
@@ -60,6 +119,13 @@ class BoardViewModel(
                 _state.value = _state.value.copy(currentUser = user)
                 
                 if (user != null) {
+                    // Sync topic subscriptions for all joined communities
+                    user.safeJoined().forEach { community ->
+                        val topic = community.lowercase().replace(" ", "_")
+                        FirebaseMessaging.getInstance().subscribeToTopic(topic)
+                        android.util.Log.d("FCM_TEST", "Subscribed to topic: $topic")
+                    }
+                    
                     // Check if selected community is still accessible
                     val isAvailable = if (user.role == Role.SUPER_ADMIN) true
                     else if (user.role == Role.ADMIN) _state.value.selectedCommunity == "General" || user.safeManaged().contains(_state.value.selectedCommunity)
@@ -73,7 +139,9 @@ class BoardViewModel(
                     val canManageRequests = user.role == Role.SUPER_ADMIN || 
                                            user.safePermissions().contains("can_approve_posts_globally") || 
                                            user.safePermissions().contains("can_manage_requests_globally") ||
-                                           (user.role == Role.ADMIN && user.safeManaged().isNotEmpty())
+                                           (user.role == Role.ADMIN && user.safeManaged().isNotEmpty() && 
+                                            (user.safePermissions().contains("can_approve_community_posts") || 
+                                             user.safePermissions().contains("can_manage_community_requests")))
                     
                     val canManageUsers = user.role == Role.SUPER_ADMIN || 
                                         user.safePermissions().contains("can_manage_roles") || 
@@ -104,7 +172,9 @@ class BoardViewModel(
                 val canManageAny = currentUser?.role == Role.SUPER_ADMIN || 
                                   currentUser?.safePermissions()?.contains("can_approve_posts_globally") == true ||
                                   currentUser?.safePermissions()?.contains("can_manage_requests_globally") == true ||
-                                  (currentUser?.role == Role.ADMIN && currentUser.safeManaged().isNotEmpty())
+                                  (currentUser?.role == Role.ADMIN && currentUser.safeManaged().isNotEmpty() && 
+                                   (currentUser.safePermissions().contains("can_approve_community_posts") || 
+                                    currentUser.safePermissions().contains("can_manage_community_requests")))
                 if (canManageAny) {
                     getJoinRequests()
                 }
@@ -235,7 +305,9 @@ class BoardViewModel(
                     val canManageRequests = currentUser?.role == Role.SUPER_ADMIN || 
                                           currentUser?.safePermissions()?.contains("can_approve_posts_globally") == true ||
                                           currentUser?.safePermissions()?.contains("can_manage_requests_globally") == true ||
-                                          (currentUser?.role == Role.ADMIN && currentUser.safeManaged().isNotEmpty())
+                                          (currentUser?.role == Role.ADMIN && currentUser.safeManaged().isNotEmpty() && 
+                                           (currentUser.safePermissions().contains("can_approve_community_posts") || 
+                                            currentUser.safePermissions().contains("can_manage_community_requests")))
                     
                     val canManageUsers = currentUser?.role == Role.SUPER_ADMIN || 
                                         currentUser?.safePermissions()?.contains("can_manage_roles") == true || 
@@ -264,55 +336,87 @@ class BoardViewModel(
             is BoardEvent.DismissError -> {
                 _state.value = _state.value.copy(error = null)
             }
+            is BoardEvent.SetPassword -> {
+                setPassword(event.password)
+            }
+            is BoardEvent.DismissSetPasswordDialog -> {
+                _state.value = _state.value.copy(showSetPasswordDialog = false)
+            }
+        }
+    }
+
+    private fun setPassword(password: String) {
+        viewModelScope.launch {
+            _state.value = _state.value.copy(isLoading = true)
+            when (val result = authRepository.setPassword(password)) {
+                is Resource.Success -> {
+                    _state.value = _state.value.copy(isLoading = false, showSetPasswordDialog = false)
+                    notificationHelper.showNotification("Success", "Password set successfully. You can now use it to login.")
+                }
+                is Resource.Error -> {
+                    _state.value = _state.value.copy(isLoading = false, error = result.message)
+                }
+                is Resource.Loading -> {}
+            }
         }
     }
 
     private fun toggleCommunityManagement(userId: String, community: String) {
+        // Optimistic update
+        val currentState = _state.value
+        val currentManaging = currentState.userToManagePermissions
+        if (currentManaging != null && currentManaging.id == userId) {
+            val updatedManaged = currentManaging.safeManaged().toMutableList()
+            if (updatedManaged.contains(community)) {
+                updatedManaged.remove(community)
+            } else {
+                updatedManaged.add(community)
+            }
+            _state.value = currentState.copy(
+                userToManagePermissions = currentManaging.copy(managedCommunities = updatedManaged)
+            )
+        }
+
         viewModelScope.launch {
             authRepository.toggleCommunityManagement(userId, community)
-            // If we are currently managing permissions for this user, update the state object
-            val currentManaging = _state.value.userToManagePermissions
-            if (currentManaging != null && currentManaging.id == userId) {
-                val updatedManaged = currentManaging.safeManaged().toMutableList()
-                if (updatedManaged.contains(community)) {
-                    updatedManaged.remove(community)
-                } else {
-                    updatedManaged.add(community)
-                }
-                _state.value = _state.value.copy(
-                    userToManagePermissions = currentManaging.copy(managedCommunities = updatedManaged)
-                )
-            }
+            // Note: We don't manually update state after the call anymore 
+            // because the getUsers() Firestore listener will sync it.
         }
     }
 
     private fun toggleUserSuspension(userId: String) {
+        // Optimistic update
+        val currentState = _state.value
+        val currentManaging = currentState.userToManagePermissions
+        if (currentManaging != null && currentManaging.id == userId) {
+            _state.value = currentState.copy(
+                userToManagePermissions = currentManaging.copy(isSuspended = !currentManaging.isSuspended)
+            )
+        }
+
         viewModelScope.launch {
             authRepository.toggleUserSuspension(userId)
-            val currentManaging = _state.value.userToManagePermissions
-            if (currentManaging != null && currentManaging.id == userId) {
-                _state.value = _state.value.copy(
-                    userToManagePermissions = currentManaging.copy(isSuspended = !currentManaging.isSuspended)
-                )
-            }
         }
     }
 
     private fun toggleGlobalPermission(userId: String, permission: String) {
+        // Optimistic update
+        val currentState = _state.value
+        val currentManaging = currentState.userToManagePermissions
+        if (currentManaging != null && currentManaging.id == userId) {
+            val updatedPerms = currentManaging.safePermissions().toMutableList()
+            if (updatedPerms.contains(permission)) {
+                updatedPerms.remove(permission)
+            } else {
+                updatedPerms.add(permission)
+            }
+            _state.value = currentState.copy(
+                userToManagePermissions = currentManaging.copy(permissions = updatedPerms)
+            )
+        }
+
         viewModelScope.launch {
             authRepository.toggleGlobalPermission(userId, permission)
-            val currentManaging = _state.value.userToManagePermissions
-            if (currentManaging != null && currentManaging.id == userId) {
-                val updatedPerms = currentManaging.safePermissions().toMutableList()
-                if (updatedPerms.contains(permission)) {
-                    updatedPerms.remove(permission)
-                } else {
-                    updatedPerms.add(permission)
-                }
-                _state.value = _state.value.copy(
-                    userToManagePermissions = currentManaging.copy(permissions = updatedPerms)
-                )
-            }
         }
     }
 
@@ -374,9 +478,28 @@ class BoardViewModel(
         getRequestsJob?.cancel()
         getRequestsJob = boardRepository.getAllPendingJoinRequests()
             .onEach { requests ->
-                // Notify if new requests arrived
-                if (requests.size > _state.value.joinRequests.size) {
-                    val newCount = requests.size - _state.value.joinRequests.size
+                val user = state.value.currentUser ?: return@onEach
+                
+                // Filter requests this user is actually allowed to manage
+                val manageableRequests = if (user.role == Role.SUPER_ADMIN || user.safePermissions().contains("can_manage_requests_globally")) {
+                    requests
+                } else if (user.role == Role.ADMIN) {
+                    requests.filter { user.safeManaged().contains(it.community) }
+                } else {
+                    emptyList()
+                }
+
+                val prevManageableCount = if (user.role == Role.SUPER_ADMIN || user.safePermissions().contains("can_manage_requests_globally")) {
+                    _state.value.joinRequests.size
+                } else if (user.role == Role.ADMIN) {
+                    _state.value.joinRequests.count { user.safeManaged().contains(it.community) }
+                } else {
+                    0
+                }
+
+                // Notify only if new manageable requests arrived
+                if (manageableRequests.size > prevManageableCount) {
+                    val newCount = manageableRequests.size - prevManageableCount
                     notificationHelper.showNotification(
                         "New Join Requests",
                         "You have $newCount new community join request(s) to review."
@@ -391,8 +514,27 @@ class BoardViewModel(
         getPendingPostsJob?.cancel()
         getPendingPostsJob = boardRepository.getPendingPosts()
             .onEach { posts ->
-                // Notify if new posts arrived for approval
-                if (posts.size > _state.value.pendingPosts.size) {
+                val user = state.value.currentUser ?: return@onEach
+                
+                // Filter posts this user is actually allowed to approve
+                val manageablePosts = if (user.role == Role.SUPER_ADMIN || user.safePermissions().contains("can_approve_posts_globally")) {
+                    posts
+                } else if (user.role == Role.ADMIN) {
+                    posts.filter { user.safeManaged().contains(it.community) }
+                } else {
+                    emptyList()
+                }
+
+                val prevManageableCount = if (user.role == Role.SUPER_ADMIN || user.safePermissions().contains("can_approve_posts_globally")) {
+                    _state.value.pendingPosts.size
+                } else if (user.role == Role.ADMIN) {
+                    _state.value.pendingPosts.count { user.safeManaged().contains(it.community) }
+                } else {
+                    0
+                }
+
+                // Notify only if new manageable posts arrived for approval
+                if (manageablePosts.size > prevManageableCount) {
                     notificationHelper.showNotification(
                         "Pending Posts",
                         "New posts are waiting for your approval."
@@ -501,6 +643,7 @@ class BoardViewModel(
                         selectedCommunity = community,
                         isLoading = false
                     )
+                    FirebaseMessaging.getInstance().subscribeToTopic(community.replace(" ", "_"))
                     getPosts(community)
                     notificationHelper.showNotification(
                         "Community Joined",
@@ -522,13 +665,14 @@ class BoardViewModel(
             val currentUser = state.value.currentUser ?: return@launch
             _state.value = _state.value.copy(isLoading = true)
 
-            when (val result = leaveCommunityUseCase(currentUser.id, community)) {
+            when (val result = leaveCommunityUseCase(currentUser, community)) {
                 is Resource.Success -> {
                     _state.value = _state.value.copy(
                         currentUser = result.data,
                         selectedCommunity = "General",
                         isLoading = false
                     )
+                    FirebaseMessaging.getInstance().unsubscribeFromTopic(community.replace(" ", "_"))
                     getPosts("General")
                     notificationHelper.showNotification(
                         "Community Left",
@@ -600,8 +744,10 @@ class BoardViewModel(
                     if (isBypassed) {
                         _state.value = _state.value.copy(
                             currentScreen = Screen.BOARD,
+                            selectedCommunity = community,
                             isLoading = false
                         )
+                        getPosts(community)
                         notificationHelper.showNotification("Post Created", "Your post has been published in $community")
                     } else {
                         _state.value = _state.value.copy(

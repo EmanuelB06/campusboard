@@ -1,9 +1,13 @@
 package com.example.campusboard
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -11,6 +15,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import com.example.campusboard.domain.use_case.*
@@ -30,6 +35,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        
+        requestNotificationPermission()
         
         // Dependency Inversion: Get dependencies from Application context
         val app = application as CampusBoardApp
@@ -57,6 +64,23 @@ class MainActivity : ComponentActivity() {
 
         enableEdgeToEdge()
         
+        // LOUD LOGGING AND TOAST FOR DEBUGGING (Commented out for production/presentation)
+        /*
+        com.google.firebase.messaging.FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
+            if (task.isSuccessful) {
+                val token = task.result
+                android.util.Log.e("FCM_TEST", "!!!!! CONNECTION SUCCESS !!!!!")
+                android.util.Log.e("FCM_TEST", "TOKEN: $token")
+                android.widget.Toast.makeText(this, "FCM Connected!", android.widget.Toast.LENGTH_SHORT).show()
+                println("FCM_DEBUG: Token is $token")
+            } else {
+                android.util.Log.e("FCM_TEST", "!!!!! CONNECTION FAILED !!!!!")
+                android.util.Log.e("FCM_TEST", "ERROR: ${task.exception?.message}")
+                android.widget.Toast.makeText(this, "FCM Failed: ${task.exception?.message}", android.widget.Toast.LENGTH_LONG).show()
+            }
+        }
+        */
+        
         setContent {
             CampusBoardTheme {
                 MainContent(
@@ -72,6 +96,26 @@ class MainActivity : ComponentActivity() {
                     createCommunityUseCase = createCommunityUseCase,
                     deletePostUseCase = deletePostUseCase
                 )
+            }
+        }
+    }
+
+    private fun requestNotificationPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val requestPermissionLauncher = registerForActivityResult(
+                ActivityResultContracts.RequestPermission()
+            ) { isGranted: Boolean ->
+                if (isGranted) {
+                    // Permission granted
+                }
+            }
+
+            if (ContextCompat.checkSelfPermission(
+                    this,
+                    Manifest.permission.POST_NOTIFICATIONS
+                ) != PackageManager.PERMISSION_GRANTED
+            ) {
+                requestPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
             }
         }
     }
@@ -96,6 +140,7 @@ class MainActivity : ComponentActivity() {
             Box(modifier = Modifier.padding(innerPadding)) {
                 if (authState.user != null && !authState.needsCommunitySelection) {
                     // BoardViewModel is scoped to the session
+                    // Side Effects (Firebase subscriptions) have been moved to BoardViewModel's init/observeCurrentUser
                     val boardViewModel = remember(authState.user.id) {
                         BoardViewModel(
                             authRepository = app.authRepository,

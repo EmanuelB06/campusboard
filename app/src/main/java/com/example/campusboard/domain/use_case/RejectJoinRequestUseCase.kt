@@ -15,10 +15,12 @@ class RejectJoinRequestUseCase(
         allRequests: List<JoinRequest>
     ): Resource<Unit> {
         val request = allRequests.find { it.id == requestId }
-        val canManage = when (currentUser?.role) {
-            Role.SUPER_ADMIN -> true
-            Role.ADMIN -> currentUser.safeManaged().contains(request?.community) || currentUser.safePermissions().contains("can_manage_requests_globally")
-            Role.USER -> currentUser.safePermissions().contains("can_manage_requests_globally")
+        val canManage = when {
+            currentUser?.role == Role.SUPER_ADMIN -> true
+            currentUser?.safePermissions()?.contains("can_manage_requests_globally") == true -> true
+            currentUser?.role == Role.ADMIN && 
+                    currentUser.safeManaged().contains(request?.community) && 
+                    currentUser.safePermissions().contains("can_manage_community_requests") -> true
             else -> false
         }
 

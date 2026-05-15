@@ -23,6 +23,18 @@ class AuthViewModel(
     private val _state = mutableStateOf(AuthState())
     val state: State<AuthState> = _state
 
+    init {
+        restoreSession()
+    }
+
+    private fun restoreSession() {
+        viewModelScope.launch {
+            _state.value = _state.value.copy(isLoading = true)
+            val user = authRepository.getSession()
+            _state.value = _state.value.copy(isLoading = false, user = user)
+        }
+    }
+
     fun onEvent(event: AuthEvent) {
         when (event) {
             is AuthEvent.ToggleMode -> {
@@ -41,7 +53,21 @@ class AuthViewModel(
                 signInWithGoogle(event.idToken, event.staySignedIn)
             }
             is AuthEvent.SignUpWithGoogle -> {
-                signUpWithGoogle(event.idToken, event.username, event.staySignedIn)
+                signUpWithGoogle(event.idToken, event.username, event.password, event.staySignedIn)
+            }
+            is AuthEvent.PrepareGoogleSignUp -> {
+                _state.value = _state.value.copy(
+                    googleIdToken = event.idToken,
+                    pendingGoogleUsername = event.username,
+                    showGoogleSignUpDialog = true
+                )
+            }
+            is AuthEvent.CancelGoogleSignUp -> {
+                _state.value = _state.value.copy(
+                    googleIdToken = null,
+                    pendingGoogleUsername = null,
+                    showGoogleSignUpDialog = false
+                )
             }
             is AuthEvent.SelectCommunity -> {
                 selectCommunity(event.community)
@@ -62,12 +88,6 @@ class AuthViewModel(
             when (val result = loginUseCase(email, password, staySignedIn)) {
                 is Resource.Success -> {
                     _state.value = _state.value.copy(isLoading = false, user = result.data)
-                    result.data?.let { user ->
-                        notificationHelper.showNotification(
-                            "Welcome back!",
-                            "Glad to see you again, ${user.username}."
-                        )
-                    }
                 }
                 is Resource.Error -> {
                     _state.value = _state.value.copy(isLoading = false, error = result.message)
@@ -108,12 +128,6 @@ class AuthViewModel(
             when (val result = authRepository.signInWithGoogle(idToken, staySignedIn)) {
                 is Resource.Success -> {
                     _state.value = _state.value.copy(isLoading = false, user = result.data)
-                    result.data?.let { user ->
-                        notificationHelper.showNotification(
-                            "Welcome back!",
-                            "Glad to see you again, ${user.username}."
-                        )
-                    }
                 }
                 is Resource.Error -> {
                     _state.value = _state.value.copy(isLoading = false, error = result.message)
@@ -125,10 +139,10 @@ class AuthViewModel(
         }
     }
 
-    private fun signUpWithGoogle(idToken: String, username: String, staySignedIn: Boolean) {
+    private fun signUpWithGoogle(idToken: String, username: String, password: String, staySignedIn: Boolean) {
         viewModelScope.launch {
-            _state.value = _state.value.copy(isLoading = true, error = null)
-            when (val result = authRepository.signUpWithGoogle(idToken, username, staySignedIn)) {
+            _state.value = _state.value.copy(isLoading = true, error = null, showGoogleSignUpDialog = false)
+            when (val result = authRepository.signUpWithGoogle(idToken, username, password, staySignedIn)) {
                 is Resource.Success -> {
                     val user = result.data
                     val needsSelection = user?.role == Role.USER

@@ -49,4 +49,8 @@ sealed class BoardEvent {
     data class ToggleUserSuspension(val userId: String) : BoardEvent()
     object Refresh : BoardEvent()
     object DismissError : BoardEvent()
+    
+    // Password for Google Users
+    data class SetPassword(val password: String) : BoardEvent()
+    object DismissSetPasswordDialog : BoardEvent()
 }

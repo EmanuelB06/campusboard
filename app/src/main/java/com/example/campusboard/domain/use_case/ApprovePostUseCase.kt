@@ -14,10 +14,12 @@ class ApprovePostUseCase(
         postId: String,
         community: String
     ): Resource<Unit> {
-        val canManage = when (currentUser?.role) {
-            Role.SUPER_ADMIN -> true
-            Role.ADMIN -> currentUser.safeManaged().contains(community) || currentUser.safePermissions().contains("can_approve_posts_globally")
-            Role.USER -> currentUser.safePermissions().contains("can_approve_posts_globally")
+        val canManage = when {
+            currentUser?.role == Role.SUPER_ADMIN -> true
+            currentUser?.safePermissions()?.contains("can_approve_posts_globally") == true -> true
+            currentUser?.role == Role.ADMIN && 
+                    currentUser.safeManaged().contains(community) && 
+                    currentUser.safePermissions().contains("can_approve_community_posts") -> true
             else -> false
         }
 

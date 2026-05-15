@@ -16,10 +16,12 @@ class ApproveJoinRequestUseCase(
         targetUserId: String,
         community: String
     ): Resource<Unit> {
-        val canManage = when (currentUser?.role) {
-            Role.SUPER_ADMIN -> true
-            Role.ADMIN -> currentUser.safeManaged().contains(community) || currentUser.safePermissions().contains("can_manage_requests_globally")
-            Role.USER -> currentUser.safePermissions().contains("can_manage_requests_globally")
+        val canManage = when {
+            currentUser?.role == Role.SUPER_ADMIN -> true
+            currentUser?.safePermissions()?.contains("can_manage_requests_globally") == true -> true
+            currentUser?.role == Role.ADMIN && 
+                    currentUser.safeManaged().contains(community) && 
+                    currentUser.safePermissions().contains("can_manage_community_requests") -> true
             else -> false
         }
 

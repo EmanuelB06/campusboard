@@ -25,5 +25,6 @@ data class BoardState(
     val communityToViewMembers: Community? = null,
     val membersToView: List<User> = emptyList(),
     val communityWarning: Pair<String, String>? = null, // userId, community
-    val communityToEdit: Community? = null
+    val communityToEdit: Community? = null,
+    val showSetPasswordDialog: Boolean = false
 )

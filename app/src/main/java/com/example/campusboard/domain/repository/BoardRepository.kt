@@ -8,6 +8,7 @@ import kotlinx.coroutines.flow.Flow
 
 interface BoardRepository {
     fun getPosts(community: String): Flow<List<Post>>
+    fun getAllApprovedPosts(): Flow<List<Post>>
     fun getPendingPosts(): Flow<List<Post>>
     suspend fun createPost(post: Post): Resource<Unit>
     suspend fun deletePost(postId: String): Resource<Unit>

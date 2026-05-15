@@ -73,6 +73,22 @@ fun AuthScreen(viewModel: AuthViewModel) {
         )
     }
 
+    if (state.showGoogleSignUpDialog) {
+        GoogleSignUpPasswordDialog(
+            onDismiss = { viewModel.onEvent(AuthEvent.CancelGoogleSignUp) },
+            onConfirm = { password ->
+                state.googleIdToken?.let { idToken ->
+                    viewModel.onEvent(AuthEvent.SignUpWithGoogle(
+                        idToken = idToken,
+                        username = state.pendingGoogleUsername ?: "Google User",
+                        password = password,
+                        staySignedIn = state.staySignedIn
+                    ))
+                }
+            }
+        )
+    }
+
     Box(modifier = Modifier.fillMaxSize()) {
         GridBackground()
         Column(
@@ -274,6 +290,62 @@ fun AuthScreen(viewModel: AuthViewModel) {
 }
 
 @Composable
+fun GoogleSignUpPasswordDialog(
+    isLoading: Boolean = false,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit
+) {
+    var password by remember { mutableStateOf("") }
+    var passwordVisible by remember { mutableStateOf(false) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Set Password") },
+        text = {
+            Column {
+                Text("Please set a password for your account so you can also use the login form.")
+                Spacer(modifier = Modifier.height(16.dp))
+                OutlinedTextField(
+                    value = password,
+                    onValueChange = { password = it },
+                    label = { Text("Password") },
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !isLoading,
+                    visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    trailingIcon = {
+                        val image = if (passwordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff
+                        IconButton(onClick = { passwordVisible = !passwordVisible }) {
+                            Icon(imageVector = image, contentDescription = null)
+                        }
+                    }
+                )
+                if (isLoading) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { if (password.length >= 6) onConfirm(password) },
+                enabled = password.length >= 6 && !isLoading
+            ) {
+                Text("Confirm")
+            }
+        },
+        dismissButton = {
+            TextButton(
+                onClick = onDismiss,
+                enabled = !isLoading
+            ) {
+                Text("Cancel")
+            }
+        }
+    )
+}
+
+@Composable
 fun CommunitySelectionDialog(
     communities: List<String>,
     onCommunitySelected: (String) -> Unit
@@ -325,7 +397,7 @@ private suspend fun handleGoogleAuth(
                 viewModel.onEvent(AuthEvent.SignInWithGoogle(credential.idToken, viewModel.state.value.staySignedIn))
             } else {
                 val googleName = credential.displayName ?: "Google User"
-                viewModel.onEvent(AuthEvent.SignUpWithGoogle(credential.idToken, googleName, viewModel.state.value.staySignedIn))
+                viewModel.onEvent(AuthEvent.PrepareGoogleSignUp(credential.idToken, googleName))
             }
         }
     } catch (e: GetCredentialException) {

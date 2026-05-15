@@ -21,11 +21,9 @@ class CreatePostUseCase(
             return Resource.Error("Your account is suspended. You cannot post.")
         }
         
-        val isBypassed = community == "General" || 
-                         user.role == Role.SUPER_ADMIN || 
-                         user.role == Role.ADMIN ||
-                         user.safePermissions().contains("bypass_approval_$community") ||
-                         user.safeManaged().contains(community)
+        val isBypassed = user.role == Role.SUPER_ADMIN || 
+                         (user.role == Role.ADMIN && user.safeManaged().contains(community)) ||
+                         user.safePermissions().contains("bypass_approval_$community")
 
         val post = Post(
             title = title,

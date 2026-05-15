@@ -3,6 +3,7 @@ package com.example.campusboard.data.repository
 import com.example.campusboard.domain.model.Community
 import com.example.campusboard.domain.model.JoinRequest
 import com.example.campusboard.domain.model.Post
+import com.example.campusboard.domain.model.PostStatus
 import com.example.campusboard.domain.model.PostType
 import com.example.campusboard.domain.model.Role
 import com.example.campusboard.domain.model.User
@@ -25,7 +26,7 @@ class BoardRepositoryImpl : BoardRepository {
     override fun getPosts(community: String): Flow<List<Post>> = callbackFlow {
         // Fetch all approved posts and filter in memory to support global broadcasts 
         // across all community boards without complex Firestore composite indexes.
-        val query = postsCollection.whereEqualTo("status", "APPROVED")
+        val query = postsCollection.whereEqualTo("status", PostStatus.APPROVED.name)
 
         val subscription = query.addSnapshotListener { snapshot, error ->
             if (error != null) {
@@ -35,7 +36,7 @@ class BoardRepositoryImpl : BoardRepository {
             if (snapshot != null) {
                 try {
                     val posts = snapshot.toObjects(Post::class.java)
-                        .filter { it.isBroadcast || community == "General" || it.community == community }
+                        .filter { it.isBroadcast || it.community == community }
                         .sortedWith(compareByDescending<Post> { it.isBroadcast }.thenByDescending { it.timestamp })
                     trySend(posts)
                 } catch (e: Exception) {
@@ -47,8 +48,28 @@ class BoardRepositoryImpl : BoardRepository {
         awaitClose { subscription.remove() }
     }
 
+    override fun getAllApprovedPosts(): Flow<List<Post>> = callbackFlow {
+        val subscription = postsCollection.whereEqualTo("status", PostStatus.APPROVED.name)
+            .addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    android.util.Log.e("BoardRepository", "Error fetching all approved posts: ${error.message}", error)
+                    return@addSnapshotListener
+                }
+                if (snapshot != null) {
+                    try {
+                        val posts = snapshot.toObjects(Post::class.java)
+                            .sortedByDescending { it.timestamp }
+                        trySend(posts)
+                    } catch (e: Exception) {
+                        android.util.Log.e("BoardRepository", "Error deserializing approved posts: ${e.message}", e)
+                    }
+                }
+            }
+        awaitClose { subscription.remove() }
+    }
+
     override fun getPendingPosts(): Flow<List<Post>> = callbackFlow {
-        val subscription = postsCollection.whereEqualTo("status", "PENDING")
+        val subscription = postsCollection.whereEqualTo("status", PostStatus.PENDING.name)
             .addSnapshotListener { snapshot, error ->
                 if (error != null) {
                     android.util.Log.e("BoardRepository", "Error fetching pending posts: ${error.message}", error)
@@ -106,15 +127,10 @@ class BoardRepositoryImpl : BoardRepository {
                 if (currentJoined.contains(community)) return@runTransaction
 
                 val newJoined = currentJoined + community
-                var newPermissions = user.safePermissions()
-
-                // If user is ADMIN or SUPER_ADMIN, auto-grant bypass for the community they just joined
-                if (user.role == Role.ADMIN || user.role == Role.SUPER_ADMIN) {
-                    val bypassPerm = "bypass_approval_$community"
-                    if (!newPermissions.contains(bypassPerm)) {
-                        newPermissions = newPermissions + bypassPerm
-                    }
-                }
+                
+                // Decoupled community joining/leaving from bypass permissions.
+                // Joining a community no longer automatically grants "bypass_approval_".
+                val newPermissions = user.safePermissions()
 
                 transaction.update(userRef, mapOf(
                     "joinedCommunities" to newJoined,

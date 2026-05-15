@@ -1,5 +1,6 @@
 package com.example.campusboard.data.repository
 
+import android.content.Context
 import com.example.campusboard.domain.model.Role
 import com.example.campusboard.domain.model.User
 import com.example.campusboard.domain.repository.AuthRepository
@@ -16,16 +17,25 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.tasks.await
 
-class AuthRepositoryImpl : AuthRepository {
+class AuthRepositoryImpl(context: Context) : AuthRepository {
     private val auth = FirebaseAuth.getInstance()
     private val firestore = FirebaseFirestore.getInstance()
     private val usersCollection = firestore.collection("users")
+    
+    private val prefs = context.getSharedPreferences("auth_prefs", Context.MODE_PRIVATE)
+    private val STAY_SIGNED_IN_KEY = "stay_signed_in"
     
     private val _currentUserFlow = MutableStateFlow<User?>(null)
     private val currentUserFlow = _currentUserFlow.asStateFlow()
     private var currentUserListener: com.google.firebase.firestore.ListenerRegistration? = null
 
     init {
+        // Handle session persistence logic
+        val staySignedIn = prefs.getBoolean(STAY_SIGNED_IN_KEY, false)
+        if (!staySignedIn && auth.currentUser != null) {
+            auth.signOut()
+        }
+
         // Listen to Firebase Auth state changes
         auth.addAuthStateListener { firebaseAuth ->
             val firebaseUser = firebaseAuth.currentUser
@@ -50,7 +60,21 @@ class AuthRepositoryImpl : AuthRepository {
             val authResult = auth.signInWithEmailAndPassword(email, password).await()
             val firebaseUser = authResult.user ?: throw Exception("Auth failed")
             
-            val user = fetchOrCreateProfile(firebaseUser.uid, email, firebaseUser.displayName)
+            val document = usersCollection.document(firebaseUser.uid).get().await()
+            if (!document.exists()) {
+                auth.signOut()
+                return Resource.Error("No profile found for this account. Please sign up first.")
+            }
+            
+            val user = document.toObject(User::class.java) ?: throw Exception("Failed to load profile")
+            
+            if (user.isSuspended) {
+                auth.signOut()
+                return Resource.Error("Your account has been suspended. Please contact the administrator.")
+            }
+            
+            prefs.edit().putBoolean(STAY_SIGNED_IN_KEY, staySignedIn).apply()
+            
             _currentUserFlow.value = user
             Resource.Success(user)
         } catch (e: Exception) {
@@ -68,7 +92,8 @@ class AuthRepositoryImpl : AuthRepository {
                 email = email, 
                 username = username, 
                 role = Role.USER, 
-                joinedCommunities = listOf("General")
+                joinedCommunities = listOf("General"),
+                isSuspended = false
             )
             usersCollection.document(firebaseUser.uid).set(user).await()
             
@@ -87,16 +112,25 @@ class AuthRepositoryImpl : AuthRepository {
             val authResult = auth.signInWithCredential(credential).await()
             val firebaseUser = authResult.user ?: return Resource.Error("Google sign-in failed")
             
-            // Note: Firebase Auth handles session persistence automatically.
-            // If staySignedIn is false, we might want to sign out when the app is closed,
-            // but Firebase doesn't support "session only" tokens easily on Android.
-            // Common practice is to handle this logic in the session management layer if needed.
+            // Check if user exists in Firestore. We don't use fetchOrCreateProfile here
+            // because "Sign In" should only work for already registered accounts.
+            val document = usersCollection.document(firebaseUser.uid).get().await()
             
-            val user = fetchOrCreateProfile(
-                firebaseUser.uid, 
-                firebaseUser.email ?: "", 
-                firebaseUser.displayName
-            )
+            if (!document.exists()) {
+                // If it's a new account from Google's perspective, but we don't have a profile,
+                // we sign them out and tell them to use the Sign Up screen.
+                auth.signOut()
+                return Resource.Error("No account found for this Google email. Please sign up first.")
+            }
+
+            val user = document.toObject(User::class.java) ?: throw Exception("Failed to load profile")
+
+            if (user.isSuspended) {
+                auth.signOut()
+                return Resource.Error("Your account has been suspended. Please contact the administrator.")
+            }
+            
+            prefs.edit().putBoolean(STAY_SIGNED_IN_KEY, staySignedIn).apply()
 
             _currentUserFlow.value = user
             Resource.Success(user)
@@ -105,12 +139,14 @@ class AuthRepositoryImpl : AuthRepository {
         }
     }
 
-    override suspend fun signUpWithGoogle(idToken: String, username: String, staySignedIn: Boolean): Resource<User> {
+    override suspend fun signUpWithGoogle(idToken: String, username: String, password: String, staySignedIn: Boolean): Resource<User> {
         return try {
             val credential = GoogleAuthProvider.getCredential(idToken, null)
             val authResult = auth.signInWithCredential(credential).await()
             val firebaseUser = authResult.user ?: return Resource.Error("Google sign-up failed")
             
+            prefs.edit().putBoolean(STAY_SIGNED_IN_KEY, staySignedIn).apply()
+
             val isNewUser = authResult.additionalUserInfo?.isNewUser ?: false
             
             if (!isNewUser) {
@@ -121,6 +157,17 @@ class AuthRepositoryImpl : AuthRepository {
                     auth.signOut()
                     return Resource.Error("This Google account is already registered. Please login instead.")
                 }
+            }
+
+            // Link Email/Password credential so they can use the login form
+            try {
+                val email = firebaseUser.email ?: throw Exception("Google account has no email")
+                val emailCredential = com.google.firebase.auth.EmailAuthProvider.getCredential(email, password)
+                firebaseUser.linkWithCredential(emailCredential).await()
+            } catch (e: Exception) {
+                // If linking fails (e.g. email already in use by another account), we might want to handle it.
+                // But since we just signed in with Google, and if isNewUser was true, it should be fine.
+                // If they already had an account with this email, linkWithCredential might fail.
             }
             
             // If they are new or didn't have a profile, create it
@@ -142,23 +189,15 @@ class AuthRepositoryImpl : AuthRepository {
         }
     }
 
-    private suspend fun fetchOrCreateProfile(uid: String, email: String, displayName: String?): User {
+    private suspend fun fetchProfile(uid: String): User? {
         val document = usersCollection.document(uid).get().await()
-        var user = document.toObject(User::class.java)
+        val user = document.toObject(User::class.java)
         
-        if (user == null) {
-            user = User(
-                id = uid,
-                email = email,
-                username = displayName ?: email.substringBefore("@"),
-                role = Role.USER,
-                joinedCommunities = listOf("General")
-            )
-            usersCollection.document(uid).set(user).await()
-        } else if (user.id.isEmpty()) {
+        if (user != null && user.id.isEmpty()) {
             // Migration for old users who didn't have ID field
-            user = user.copy(id = uid)
-            usersCollection.document(uid).set(user).await()
+            val updatedUser = user.copy(id = uid)
+            usersCollection.document(uid).set(updatedUser).await()
+            return updatedUser
         }
         return user
     }
@@ -169,11 +208,11 @@ class AuthRepositoryImpl : AuthRepository {
         val firebaseUser = auth.currentUser
         return if (firebaseUser != null) {
             try {
-                val user = fetchOrCreateProfile(
-                    firebaseUser.uid, 
-                    firebaseUser.email ?: "", 
-                    firebaseUser.displayName
-                )
+                val user = fetchProfile(firebaseUser.uid)
+                if (user == null) {
+                    auth.signOut()
+                    return null
+                }
                 _currentUserFlow.value = user
                 user
             } catch (e: Exception) {
@@ -184,6 +223,7 @@ class AuthRepositoryImpl : AuthRepository {
 
     override suspend fun logout() {
         auth.signOut()
+        prefs.edit().putBoolean(STAY_SIGNED_IN_KEY, false).apply()
         _currentUserFlow.value = null
     }
 
@@ -213,15 +253,34 @@ class AuthRepositoryImpl : AuthRepository {
                         updatedManaged = (updatedManaged + communityToManage).distinct()
                     }
                     
-                    val joinedBypasses = user.safeJoined().map { "bypass_approval_$it" }
-                    val managedBypasses = updatedManaged.map { "bypass_approval_$it" }
-                    val defaultAdminPerms = listOf("can_delete_community_posts", "can_manage_community_users")
-                    updatedPermissions = (updatedPermissions + joinedBypasses + managedBypasses + defaultAdminPerms).distinct()
+                    // Admin roles get basic community management perms by default.
+                    val defaultAdminPerms = listOf(
+                        "can_delete_community_posts", 
+                        "can_manage_community_users",
+                        "can_approve_community_posts",
+                        "can_manage_community_requests"
+                    )
+                    updatedPermissions = (updatedPermissions + defaultAdminPerms).distinct()
                 } else if (newRole == Role.USER) {
                     updatedManaged = emptyList()
-                    val adminPermsToRemove = listOf("can_delete_community_posts", "can_manage_community_users")
+                    // When demoting to USER, we remove all administrative and management permissions.
+                    val adminPermsToRemove = listOf(
+                        "can_delete_community_posts", 
+                        "can_manage_community_users",
+                        "can_manage_roles",
+                        "can_manage_permissions",
+                        "can_manage_requests_globally",
+                        "can_approve_posts_globally",
+                        "can_manage_bypass_approval",
+                        "can_delete_any_post",
+                        "can_create_community",
+                        "can_edit_any_community",
+                        "can_send_global_broadcast",
+                        "can_approve_community_posts",
+                        "can_manage_community_requests"
+                    )
                     updatedPermissions = updatedPermissions.filter { 
-                        !it.startsWith("bypass_approval_") && !adminPermsToRemove.contains(it) 
+                        !adminPermsToRemove.contains(it) 
                     }
                 }
 
@@ -257,21 +316,10 @@ class AuthRepositoryImpl : AuthRepository {
                 val isAdding = !managed.contains(community)
                 
                 val newManaged = if (isAdding) managed + community else managed.filter { it != community }
-                var newPermissions = perms
-
-                // If user is ADMIN/SUPER_ADMIN and we're adding a community, auto-grant bypass for it
-                if ((user.role == Role.ADMIN || user.role == Role.SUPER_ADMIN) && isAdding) {
-                    val bypassPerm = "bypass_approval_$community"
-                    if (!perms.contains(bypassPerm)) {
-                        newPermissions = perms + bypassPerm
-                    }
-                } else if ((user.role == Role.ADMIN || user.role == Role.SUPER_ADMIN) && !isAdding) {
-                    // If removing management, also revoke the bypass UNLESS they are also joined
-                    if (!user.safeJoined().contains(community)) {
-                        val bypassPerm = "bypass_approval_$community"
-                        newPermissions = perms.filter { it != bypassPerm }
-                    }
-                }
+                
+                // Decoupled community management from bypass permissions.
+                // Toggling management no longer affects "bypass_approval_" flags.
+                val newPermissions = perms
                 
                 transaction.update(userRef, mapOf(
                     "managedCommunities" to newManaged,
@@ -294,39 +342,45 @@ class AuthRepositoryImpl : AuthRepository {
 
     override suspend fun toggleGlobalPermission(userId: String, permission: String) {
         try {
-            val doc = usersCollection.document(userId).get().await()
-            val user = doc.toObject(User::class.java) ?: return
-            
-            val perms = user.safePermissions()
-            val newList = if (perms.contains(permission)) {
-                perms.filter { it != permission }
-            } else {
-                perms + permission
-            }
-            
-            usersCollection.document(userId).update("permissions", newList).await()
-            
-            if (_currentUserFlow.value?.id == userId) {
-                _currentUserFlow.value = _currentUserFlow.value?.copy(permissions = newList)
-            }
+            val userRef = usersCollection.document(userId)
+            firestore.runTransaction { transaction ->
+                val snapshot = transaction.get(userRef)
+                val user = snapshot.toObject(User::class.java) ?: return@runTransaction
+                
+                val perms = user.safePermissions()
+                val newList = if (perms.contains(permission)) {
+                    perms.filter { it != permission }
+                } else {
+                    perms + permission
+                }
+                
+                transaction.update(userRef, "permissions", newList)
+                
+                if (_currentUserFlow.value?.id == userId) {
+                    _currentUserFlow.value = _currentUserFlow.value?.copy(permissions = newList)
+                }
+            }.await()
         } catch (e: Exception) {
-            // Log error
+            android.util.Log.e("AuthRepo", "Error toggling global permission: ${e.message}")
         }
     }
 
     override suspend fun toggleUserSuspension(userId: String) {
         try {
-            val doc = usersCollection.document(userId).get().await()
-            val user = doc.toObject(User::class.java) ?: return
-            
-            val newState = !user.isSuspended
-            usersCollection.document(userId).update("isSuspended", newState).await()
-            
-            if (_currentUserFlow.value?.id == userId) {
-                _currentUserFlow.value = _currentUserFlow.value?.copy(isSuspended = newState)
-            }
+            val userRef = usersCollection.document(userId)
+            firestore.runTransaction { transaction ->
+                val snapshot = transaction.get(userRef)
+                val user = snapshot.toObject(User::class.java) ?: return@runTransaction
+                
+                val newState = !user.isSuspended
+                transaction.update(userRef, "isSuspended", newState)
+                
+                if (_currentUserFlow.value?.id == userId) {
+                    _currentUserFlow.value = _currentUserFlow.value?.copy(isSuspended = newState)
+                }
+            }.await()
         } catch (e: Exception) {
-            // Log error
+            android.util.Log.e("AuthRepo", "Error toggling user suspension: ${e.message}")
         }
     }
 
@@ -341,15 +395,10 @@ class AuthRepositoryImpl : AuthRepository {
                 if (currentJoined.contains(community)) return@runTransaction
 
                 val newJoined = currentJoined + community
-                var newPermissions = user.safePermissions()
-
-                // If user is ADMIN or SUPER_ADMIN, auto-grant bypass for the community they just joined
-                if (user.role == Role.ADMIN || user.role == Role.SUPER_ADMIN) {
-                    val bypassPerm = "bypass_approval_$community"
-                    if (!newPermissions.contains(bypassPerm)) {
-                        newPermissions = newPermissions + bypassPerm
-                    }
-                }
+                
+                // Decoupled community joining/leaving from bypass permissions.
+                // Joining a community no longer automatically grants "bypass_approval_".
+                val newPermissions = user.safePermissions()
 
                 transaction.update(userRef, mapOf(
                     "joinedCommunities" to newJoined,
@@ -389,15 +438,10 @@ class AuthRepositoryImpl : AuthRepository {
                 if (!currentJoined.contains(community)) return@runTransaction
 
                 val newJoined = currentJoined.filter { it != community }
-                var newPermissions = user.safePermissions()
-
-                // If user is ADMIN or SUPER_ADMIN, remove bypass UNLESS they also manage this community
-                if (user.role == Role.ADMIN || user.role == Role.SUPER_ADMIN) {
-                    if (!user.safeManaged().contains(community)) {
-                        val bypassPerm = "bypass_approval_$community"
-                        newPermissions = newPermissions.filter { it != bypassPerm }
-                    }
-                }
+                
+                // Decoupled community joining/leaving from bypass permissions.
+                // Leaving a community no longer automatically revokes "bypass_approval_".
+                val newPermissions = user.safePermissions()
 
                 transaction.update(userRef, mapOf(
                     "joinedCommunities" to newJoined,
@@ -423,6 +467,25 @@ class AuthRepositoryImpl : AuthRepository {
             }
         } catch (e: Exception) {
             Resource.Error(e.message ?: "Could not leave community")
+        }
+    }
+
+    override suspend fun isGoogleOnly(): Boolean {
+        val user = auth.currentUser ?: return false
+        return user.providerData.any { it.providerId == "google.com" } && 
+               user.providerData.none { it.providerId == "password" }
+    }
+
+    override suspend fun setPassword(password: String): Resource<Unit> {
+        return try {
+            val user = auth.currentUser ?: throw Exception("No user logged in")
+            // Instead of updatePassword, we should use linkWithCredential if we want to enable email/password login
+            val email = user.email ?: throw Exception("User has no email")
+            val credential = com.google.firebase.auth.EmailAuthProvider.getCredential(email, password)
+            user.linkWithCredential(credential).await()
+            Resource.Success(Unit)
+        } catch (e: Exception) {
+            Resource.Error(e.localizedMessage ?: "Failed to set password")
         }
     }
 

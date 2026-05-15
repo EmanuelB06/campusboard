@@ -8,7 +8,9 @@ sealed class AuthEvent {
         val password: String,
         val confirmPassword: String
     ) : AuthEvent()
-    data class SignUpWithGoogle(val idToken: String, val username: String, val staySignedIn: Boolean) : AuthEvent()
+    data class SignUpWithGoogle(val idToken: String, val username: String, val password: String, val staySignedIn: Boolean) : AuthEvent()
+    data class PrepareGoogleSignUp(val idToken: String, val username: String) : AuthEvent()
+    object CancelGoogleSignUp : AuthEvent()
     data class SignInWithGoogle(val idToken: String, val staySignedIn: Boolean) : AuthEvent()
     data class SelectCommunity(val community: String) : AuthEvent()
     object ToggleMode : AuthEvent()
