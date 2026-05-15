@@ -20,6 +20,7 @@ sealed class BoardEvent {
     object CancelLogout : BoardEvent()
     
     data class JoinCommunity(val community: String) : BoardEvent()
+    data class LeaveCommunity(val community: String) : BoardEvent()
     data class NavigateTo(val screen: Screen) : BoardEvent()
     object Logout : BoardEvent()
 

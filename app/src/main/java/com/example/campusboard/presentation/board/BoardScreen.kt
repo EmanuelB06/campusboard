@@ -26,6 +26,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.HelpOutline
 import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.automirrored.filled.StickyNote2
+import androidx.compose.material.icons.automirrored.filled.ExitToApp
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.material3.SwitchDefaults
@@ -59,6 +60,7 @@ import com.example.campusboard.domain.model.Post
 import com.example.campusboard.domain.model.PostType
 import com.example.campusboard.domain.model.Role
 import com.example.campusboard.domain.model.Community
+import com.example.campusboard.CampusBoardApp
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
@@ -92,23 +94,6 @@ fun GridBackground(modifier: Modifier = Modifier) {
     }
 }
 
-
-private fun showNotification(context: Context, title: String, content: String) {
-    val channelId = "campus_board_channel"
-    val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-        val channel = NotificationChannel(channelId, "Campus Board Notifications", NotificationManager.IMPORTANCE_DEFAULT)
-        notificationManager.createNotificationChannel(channel)
-    }
-    val notification = NotificationCompat.Builder(context, channelId)
-        .setSmallIcon(android.R.drawable.ic_dialog_info)
-        .setContentTitle(title)
-        .setContentText(content)
-        .setPriority(NotificationCompat.PRIORITY_DEFAULT)
-        .setAutoCancel(true)
-        .build()
-    notificationManager.notify(System.currentTimeMillis().toInt(), notification)
-}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -1306,17 +1291,34 @@ fun CommunityCard(
 
             Spacer(Modifier.height(20.dp))
 
-            OutlinedButton(
-                onClick = onViewMembers,
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp),
-                border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF1E293B)),
-                contentPadding = PaddingValues(vertical = 12.dp)
-            ) {
-                Icon(Icons.Default.People, null, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(8.dp))
-                Text("View Community Members", fontWeight = FontWeight.Bold)
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(
+                    onClick = onViewMembers,
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF1E293B)),
+                    contentPadding = PaddingValues(vertical = 12.dp)
+                ) {
+                    Icon(Icons.Default.People, null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Members", fontWeight = FontWeight.Bold)
+                }
+
+                val currentUser = viewModel.state.value.currentUser
+                if (currentUser != null && community.name != "General" && currentUser.safeJoined().contains(community.name)) {
+                    Button(
+                        onClick = { viewModel.onEvent(BoardEvent.LeaveCommunity(community.name)) },
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFEE2E2), contentColor = Color(0xFFB91C1C)),
+                        contentPadding = PaddingValues(vertical = 12.dp)
+                    ) {
+                        Icon(Icons.AutoMirrored.Filled.ExitToApp, null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Leave", fontWeight = FontWeight.Bold)
+                    }
+                }
             }
         }
     }
@@ -1990,7 +1992,6 @@ fun CreatePostContent(viewModel: BoardViewModel) {
                         community = selectedCommunityTarget,
                         isBroadcast = isBroadcast
                     ))
-                    showNotification(context, "Note Pinned", "Your note has been added to the board.")
                 }
             }, 
             modifier = Modifier.fillMaxWidth().height(56.dp),

@@ -13,8 +13,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
-import com.example.campusboard.domain.use_case.LoginUseCase
-import com.example.campusboard.domain.use_case.RegisterUseCase
+import com.example.campusboard.domain.use_case.*
 import com.example.campusboard.presentation.auth.AuthEvent
 import com.example.campusboard.presentation.auth.AuthScreen
 import com.example.campusboard.presentation.auth.AuthViewModel
@@ -38,12 +37,21 @@ class MainActivity : ComponentActivity() {
         // SRP: Use cases handle specific business logic
         val loginUseCase = LoginUseCase(app.authRepository)
         val registerUseCase = RegisterUseCase(app.authRepository)
+        val joinCommunityUseCase = JoinCommunityUseCase(app.authRepository, app.boardRepository)
+        val leaveCommunityUseCase = LeaveCommunityUseCase(app.authRepository)
+        val createPostUseCase = CreatePostUseCase(app.boardRepository)
+        val approveJoinRequestUseCase = ApproveJoinRequestUseCase(app.authRepository, app.boardRepository)
+        val rejectJoinRequestUseCase = RejectJoinRequestUseCase(app.boardRepository)
+        val approvePostUseCase = ApprovePostUseCase(app.boardRepository)
+        val rejectPostUseCase = RejectPostUseCase(app.boardRepository)
+        val createCommunityUseCase = CreateCommunityUseCase(app.boardRepository)
+        val deletePostUseCase = DeletePostUseCase(app.boardRepository)
         
         // ViewModel Factory for manual DI
         val authViewModel = ViewModelProvider(this, object : ViewModelProvider.Factory {
             override fun <T : ViewModel> create(modelClass: Class<T>): T {
                 @Suppress("UNCHECKED_CAST")
-                return AuthViewModel(app.authRepository, loginUseCase, registerUseCase) as T
+                return AuthViewModel(app.authRepository, loginUseCase, registerUseCase, app.notificationHelper) as T
             }
         })[AuthViewModel::class.java]
 
@@ -51,13 +59,37 @@ class MainActivity : ComponentActivity() {
         
         setContent {
             CampusBoardTheme {
-                MainContent(authViewModel, app)
+                MainContent(
+                    authViewModel = authViewModel, 
+                    app = app,
+                    joinCommunityUseCase = joinCommunityUseCase,
+                    leaveCommunityUseCase = leaveCommunityUseCase,
+                    createPostUseCase = createPostUseCase,
+                    approveJoinRequestUseCase = approveJoinRequestUseCase,
+                    rejectJoinRequestUseCase = rejectJoinRequestUseCase,
+                    approvePostUseCase = approvePostUseCase,
+                    rejectPostUseCase = rejectPostUseCase,
+                    createCommunityUseCase = createCommunityUseCase,
+                    deletePostUseCase = deletePostUseCase
+                )
             }
         }
     }
 
     @Composable
-    private fun MainContent(authViewModel: AuthViewModel, app: CampusBoardApp) {
+    private fun MainContent(
+        authViewModel: AuthViewModel, 
+        app: CampusBoardApp,
+        joinCommunityUseCase: JoinCommunityUseCase,
+        leaveCommunityUseCase: LeaveCommunityUseCase,
+        createPostUseCase: CreatePostUseCase,
+        approveJoinRequestUseCase: ApproveJoinRequestUseCase,
+        rejectJoinRequestUseCase: RejectJoinRequestUseCase,
+        approvePostUseCase: ApprovePostUseCase,
+        rejectPostUseCase: RejectPostUseCase,
+        createCommunityUseCase: CreateCommunityUseCase,
+        deletePostUseCase: DeletePostUseCase
+    ) {
         val authState = authViewModel.state.value
         
         Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
@@ -68,6 +100,16 @@ class MainActivity : ComponentActivity() {
                         BoardViewModel(
                             authRepository = app.authRepository,
                             boardRepository = app.boardRepository,
+                            notificationHelper = app.notificationHelper,
+                            joinCommunityUseCase = joinCommunityUseCase,
+                            leaveCommunityUseCase = leaveCommunityUseCase,
+                            createPostUseCase = createPostUseCase,
+                            approveJoinRequestUseCase = approveJoinRequestUseCase,
+                            rejectJoinRequestUseCase = rejectJoinRequestUseCase,
+                            approvePostUseCase = approvePostUseCase,
+                            rejectPostUseCase = rejectPostUseCase,
+                            createCommunityUseCase = createCommunityUseCase,
+                            deletePostUseCase = deletePostUseCase,
                             initialUser = authState.user,
                             onLogout = { authViewModel.onEvent(AuthEvent.Logout) }
                         )

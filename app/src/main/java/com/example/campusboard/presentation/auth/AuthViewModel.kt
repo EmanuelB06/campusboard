@@ -10,12 +10,14 @@ import com.example.campusboard.domain.repository.AuthRepository
 import com.example.campusboard.domain.use_case.LoginUseCase
 import com.example.campusboard.domain.use_case.RegisterUseCase
 import com.example.campusboard.domain.util.Resource
+import com.example.campusboard.util.NotificationHelper
 import kotlinx.coroutines.launch
 
 class AuthViewModel(
     private val authRepository: AuthRepository,
     private val loginUseCase: LoginUseCase,
-    private val registerUseCase: RegisterUseCase
+    private val registerUseCase: RegisterUseCase,
+    private val notificationHelper: NotificationHelper
 ) : ViewModel() {
 
     private val _state = mutableStateOf(AuthState())
@@ -60,6 +62,12 @@ class AuthViewModel(
             when (val result = loginUseCase(email, password, staySignedIn)) {
                 is Resource.Success -> {
                     _state.value = _state.value.copy(isLoading = false, user = result.data)
+                    result.data?.let { user ->
+                        notificationHelper.showNotification(
+                            "Welcome back!",
+                            "Glad to see you again, ${user.username}."
+                        )
+                    }
                 }
                 is Resource.Error -> {
                     _state.value = _state.value.copy(isLoading = false, error = result.message)
@@ -100,6 +108,12 @@ class AuthViewModel(
             when (val result = authRepository.signInWithGoogle(idToken, staySignedIn)) {
                 is Resource.Success -> {
                     _state.value = _state.value.copy(isLoading = false, user = result.data)
+                    result.data?.let { user ->
+                        notificationHelper.showNotification(
+                            "Welcome back!",
+                            "Glad to see you again, ${user.username}."
+                        )
+                    }
                 }
                 is Resource.Error -> {
                     _state.value = _state.value.copy(isLoading = false, error = result.message)

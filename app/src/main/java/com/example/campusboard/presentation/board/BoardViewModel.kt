@@ -7,7 +7,9 @@ import androidx.lifecycle.viewModelScope
 import com.example.campusboard.domain.model.*
 import com.example.campusboard.domain.repository.AuthRepository
 import com.example.campusboard.domain.repository.BoardRepository
+import com.example.campusboard.domain.use_case.*
 import com.example.campusboard.domain.util.Resource
+import com.example.campusboard.util.NotificationHelper
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
@@ -16,6 +18,16 @@ import kotlinx.coroutines.launch
 class BoardViewModel(
     private val authRepository: AuthRepository,
     private val boardRepository: BoardRepository,
+    private val notificationHelper: NotificationHelper,
+    private val joinCommunityUseCase: JoinCommunityUseCase,
+    private val leaveCommunityUseCase: LeaveCommunityUseCase,
+    private val createPostUseCase: CreatePostUseCase,
+    private val approveJoinRequestUseCase: ApproveJoinRequestUseCase,
+    private val rejectJoinRequestUseCase: RejectJoinRequestUseCase,
+    private val approvePostUseCase: ApprovePostUseCase,
+    private val rejectPostUseCase: RejectPostUseCase,
+    private val createCommunityUseCase: CreateCommunityUseCase,
+    private val deletePostUseCase: DeletePostUseCase,
     initialUser: User,
     private val onLogout: () -> Unit = {}
 ) : ViewModel() {
@@ -143,6 +155,10 @@ class BoardViewModel(
 
             is BoardEvent.JoinCommunity -> {
                 joinCommunity(event.community)
+            }
+
+            is BoardEvent.LeaveCommunity -> {
+                leaveCommunity(event.community)
             }
 
             is BoardEvent.NavigateTo -> {
@@ -331,13 +347,11 @@ class BoardViewModel(
 
     private fun createCommunity(name: String, description: String) {
         viewModelScope.launch {
-            val currentUser = state.value.currentUser
-            val canCreate = currentUser?.role == Role.SUPER_ADMIN || currentUser?.safePermissions()?.contains("can_create_community") == true
-            if (canCreate) {
-                val community = Community(name = name, description = description, creatorEmail = currentUser.email)
-                boardRepository.createCommunity(community)
-            } else {
-                _state.value = _state.value.copy(error = "You don't have permission to create communities.")
+            _state.value = _state.value.copy(isLoading = true)
+            val result = createCommunityUseCase(state.value.currentUser, name, description)
+            _state.value = _state.value.copy(isLoading = false)
+            if (result is Resource.Error) {
+                _state.value = _state.value.copy(error = result.message)
             }
         }
     }
@@ -345,7 +359,7 @@ class BoardViewModel(
     private fun updateCommunity(name: String, description: String) {
         viewModelScope.launch {
             val community = _state.value.communityToEdit ?: return@launch
-            val updated = community.copy(description = description)
+            val updated = community.copy(name = name, description = description)
             val result = boardRepository.updateCommunity(updated)
             if (result is Resource.Success) {
                 _state.value = _state.value.copy(communityToEdit = null)
@@ -360,6 +374,14 @@ class BoardViewModel(
         getRequestsJob?.cancel()
         getRequestsJob = boardRepository.getAllPendingJoinRequests()
             .onEach { requests ->
+                // Notify if new requests arrived
+                if (requests.size > _state.value.joinRequests.size) {
+                    val newCount = requests.size - _state.value.joinRequests.size
+                    notificationHelper.showNotification(
+                        "New Join Requests",
+                        "You have $newCount new community join request(s) to review."
+                    )
+                }
                 _state.value = _state.value.copy(joinRequests = requests)
             }
             .launchIn(viewModelScope)
@@ -369,6 +391,13 @@ class BoardViewModel(
         getPendingPostsJob?.cancel()
         getPendingPostsJob = boardRepository.getPendingPosts()
             .onEach { posts ->
+                // Notify if new posts arrived for approval
+                if (posts.size > _state.value.pendingPosts.size) {
+                    notificationHelper.showNotification(
+                        "Pending Posts",
+                        "New posts are waiting for your approval."
+                    )
+                }
                 _state.value = _state.value.copy(pendingPosts = posts)
             }
             .launchIn(viewModelScope)
@@ -403,84 +432,58 @@ class BoardViewModel(
 
     private fun acceptJoinRequest(requestId: String, userId: String, community: String) {
         viewModelScope.launch {
-            val currentUser = state.value.currentUser
-            val canManage = when (currentUser?.role) {
-                Role.SUPER_ADMIN -> true
-                Role.ADMIN -> currentUser.safeManaged().contains(community) || currentUser.safePermissions().contains("can_manage_requests_globally")
-                Role.USER -> currentUser.safePermissions().contains("can_manage_requests_globally")
-                else -> false
-            }
-
-            if (canManage) {
-                // Auto-leave from other non-General communities for the target user
-                val targetUser = state.value.users.find { it.id == userId }
-                targetUser?.let { tUser ->
-                    val joinedNonGeneral = tUser.safeJoined().filter { it != "General" && it != community }
-                    for (prevCommunity in joinedNonGeneral) {
-                        authRepository.leaveCommunity(userId, prevCommunity)
-                    }
-                }
-
-                authRepository.joinCommunity(userId, community)
-                boardRepository.updateJoinRequestStatus(requestId, "ACCEPTED")
-            } else {
-                _state.value = _state.value.copy(error = "You don't have permission to manage requests for this community.")
+            _state.value = _state.value.copy(isLoading = true)
+            val result = approveJoinRequestUseCase(state.value.currentUser, requestId, userId, community)
+            _state.value = _state.value.copy(isLoading = false)
+            
+            if (result is Resource.Success) {
+                notificationHelper.showNotification(
+                    "Request Accepted",
+                    "You have accepted $userId's request to join $community."
+                )
+            } else if (result is Resource.Error) {
+                _state.value = _state.value.copy(error = result.message)
             }
         }
     }
 
     private fun rejectJoinRequest(requestId: String) {
         viewModelScope.launch {
-            val request = state.value.joinRequests.find { it.id == requestId }
-            val currentUser = state.value.currentUser
-            val canManage = when (currentUser?.role) {
-                Role.SUPER_ADMIN -> true
-                Role.ADMIN -> currentUser.safeManaged().contains(request?.community) || currentUser.safePermissions().contains("can_manage_requests_globally")
-                Role.USER -> currentUser.safePermissions().contains("can_manage_requests_globally")
-                else -> false
-            }
-
-            if (canManage) {
-                boardRepository.updateJoinRequestStatus(requestId, "REJECTED")
-            } else {
-                _state.value = _state.value.copy(error = "You don't have permission to manage requests for this community.")
+            _state.value = _state.value.copy(isLoading = true)
+            val result = rejectJoinRequestUseCase(state.value.currentUser, requestId, state.value.joinRequests)
+            _state.value = _state.value.copy(isLoading = false)
+            
+            if (result is Resource.Error) {
+                _state.value = _state.value.copy(error = result.message)
             }
         }
     }
 
     private fun acceptPostRequest(postId: String, community: String) {
         viewModelScope.launch {
-            val currentUser = state.value.currentUser
-            val canManage = when (currentUser?.role) {
-                Role.SUPER_ADMIN -> true
-                Role.ADMIN -> currentUser.safeManaged().contains(community) || currentUser.safePermissions().contains("can_approve_posts_globally")
-                Role.USER -> currentUser.safePermissions().contains("can_approve_posts_globally")
-                else -> false
-            }
+            _state.value = _state.value.copy(isLoading = true)
+            val result = approvePostUseCase(state.value.currentUser, postId, community)
+            _state.value = _state.value.copy(isLoading = false)
 
-            if (canManage) {
-                boardRepository.updatePostStatus(postId, PostStatus.APPROVED)
-            } else {
-                _state.value = _state.value.copy(error = "You don't have permission to approve posts for this community.")
+            if (result is Resource.Success) {
+                notificationHelper.showNotification(
+                    "Post Approved",
+                    "The post has been successfully approved and is now live."
+                )
+            } else if (result is Resource.Error) {
+                _state.value = _state.value.copy(error = result.message)
             }
         }
     }
 
     private fun rejectPostRequest(postId: String) {
         viewModelScope.launch {
-            val post = state.value.pendingPosts.find { it.id == postId }
-            val currentUser = state.value.currentUser
-            val canManage = when (currentUser?.role) {
-                Role.SUPER_ADMIN -> true
-                Role.ADMIN -> currentUser.safeManaged().contains(post?.community) || currentUser.safePermissions().contains("can_approve_posts_globally")
-                Role.USER -> currentUser.safePermissions().contains("can_approve_posts_globally")
-                else -> false
-            }
+            _state.value = _state.value.copy(isLoading = true)
+            val result = rejectPostUseCase(state.value.currentUser, postId, state.value.pendingPosts)
+            _state.value = _state.value.copy(isLoading = false)
 
-            if (canManage) {
-                boardRepository.updatePostStatus(postId, PostStatus.REJECTED)
-            } else {
-                _state.value = _state.value.copy(error = "You don't have permission to reject posts for this community.")
+            if (result is Resource.Error) {
+                _state.value = _state.value.copy(error = result.message)
             }
         }
     }
@@ -490,20 +493,7 @@ class BoardViewModel(
             val currentUser = state.value.currentUser ?: return@launch
             _state.value = _state.value.copy(isLoading = true)
 
-            // Auto-leave from other non-General communities
-            val joinedNonGeneral = currentUser.safeJoined().filter { it != "General" && it != community }
-            for (prevCommunity in joinedNonGeneral) {
-                authRepository.leaveCommunity(currentUser.id, prevCommunity)
-            }
-
-            // Cancel any existing pending requests
-            val pendingNonGeneral = state.value.myJoinRequests
-                .filter { it.status == "PENDING" && it.community != "General" }
-            for (request in pendingNonGeneral) {
-                boardRepository.cancelJoinRequest(request.id)
-            }
-
-            when (val result = authRepository.joinCommunity(currentUser.id, community)) {
+            when (val result = joinCommunityUseCase(currentUser, community, state.value.myJoinRequests)) {
                 is Resource.Success -> {
                     _state.value = _state.value.copy(
                         currentUser = result.data,
@@ -512,11 +502,45 @@ class BoardViewModel(
                         isLoading = false
                     )
                     getPosts(community)
+                    notificationHelper.showNotification(
+                        "Community Joined",
+                        "You have successfully joined $community"
+                    )
                 }
                 is Resource.Error -> {
                     _state.value = _state.value.copy(error = result.message, isLoading = false)
                 }
-                else -> {}
+                else -> {
+                    _state.value = _state.value.copy(isLoading = false)
+                }
+            }
+        }
+    }
+
+    private fun leaveCommunity(community: String) {
+        viewModelScope.launch {
+            val currentUser = state.value.currentUser ?: return@launch
+            _state.value = _state.value.copy(isLoading = true)
+
+            when (val result = leaveCommunityUseCase(currentUser.id, community)) {
+                is Resource.Success -> {
+                    _state.value = _state.value.copy(
+                        currentUser = result.data,
+                        selectedCommunity = "General",
+                        isLoading = false
+                    )
+                    getPosts("General")
+                    notificationHelper.showNotification(
+                        "Community Left",
+                        "You have left $community"
+                    )
+                }
+                is Resource.Error -> {
+                    _state.value = _state.value.copy(error = result.message, isLoading = false)
+                }
+                else -> {
+                    _state.value = _state.value.copy(isLoading = false)
+                }
             }
         }
     }
@@ -568,69 +592,43 @@ class BoardViewModel(
     private fun createPost(title: String, content: String, type: PostType, color: Long, timestamp: Long, community: String, isBroadcast: Boolean = false) {
         viewModelScope.launch {
             val currentUser = state.value.currentUser ?: return@launch
-
-            if (currentUser.isSuspended) {
-                _state.value = _state.value.copy(error = "Your account is suspended. You cannot post.")
-                return@launch
-            }
-            
-            val isBypassed = community == "General" || 
-                             currentUser.role == Role.SUPER_ADMIN || 
-                             currentUser.role == Role.ADMIN ||
-                             currentUser.safePermissions().contains("bypass_approval_$community") ||
-                             currentUser.safeManaged().contains(community)
-
-            val post = Post(
-                title = title,
-                content = content,
-                author = currentUser.username,
-                community = community,
-                type = type,
-                color = color,
-                timestamp = timestamp,
-                status = if (isBypassed) PostStatus.APPROVED else PostStatus.PENDING,
-                isBroadcast = isBroadcast
-            )
             _state.value = _state.value.copy(isLoading = true)
-            val result = boardRepository.createPost(post)
-            _state.value = _state.value.copy(isLoading = false)
 
-            when (result) {
+            when (val result = createPostUseCase(currentUser, title, content, type, color, timestamp, community, isBroadcast)) {
                 is Resource.Success -> {
+                    val isBypassed = result.data == true
                     if (isBypassed) {
-                        _state.value = _state.value.copy(currentScreen = Screen.BOARD)
+                        _state.value = _state.value.copy(
+                            currentScreen = Screen.BOARD,
+                            isLoading = false
+                        )
+                        notificationHelper.showNotification("Post Created", "Your post has been published in $community")
                     } else {
                         _state.value = _state.value.copy(
                             error = "Your post has been submitted for approval.",
-                            currentScreen = Screen.BOARD
+                            currentScreen = Screen.BOARD,
+                            isLoading = false
                         )
                     }
                 }
                 is Resource.Error -> {
-                    _state.value = _state.value.copy(error = result.message ?: "Failed to create post")
+                    _state.value = _state.value.copy(error = result.message, isLoading = false)
                 }
-                else -> {}
+                else -> {
+                    _state.value = _state.value.copy(isLoading = false)
+                }
             }
         }
     }
 
     private fun deletePost(postId: String) {
         viewModelScope.launch {
-            val post = state.value.posts.find { it.id == postId }
-            val currentUser = state.value.currentUser
-            val canDelete = when (currentUser?.role) {
-                Role.SUPER_ADMIN -> true
-                Role.ADMIN -> currentUser.safePermissions().contains("can_delete_any_post") == true ||
-                             (currentUser.safeManaged().contains(post?.community) == true && 
-                              currentUser.safePermissions().contains("can_delete_community_posts") == true)
-                Role.USER -> currentUser.safePermissions().contains("can_delete_any_post") == true
-                else -> false
-            }
+            _state.value = _state.value.copy(isLoading = true)
+            val result = deletePostUseCase(state.value.currentUser, postId, state.value.posts)
+            _state.value = _state.value.copy(isLoading = false)
             
-            if (canDelete) {
-                boardRepository.deletePost(postId)
-            } else {
-                _state.value = _state.value.copy(error = "You don't have permission to delete posts in this community.")
+            if (result is Resource.Error) {
+                _state.value = _state.value.copy(error = result.message)
             }
         }
     }
