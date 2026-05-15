@@ -3,6 +3,7 @@ package com.example.campusboard.data.repository
 import com.example.campusboard.domain.model.Community
 import com.example.campusboard.domain.model.JoinRequest
 import com.example.campusboard.domain.model.Post
+import com.example.campusboard.domain.model.PostType
 import com.example.campusboard.domain.model.Role
 import com.example.campusboard.domain.model.User
 import com.example.campusboard.domain.repository.BoardRepository
@@ -229,6 +230,41 @@ class BoardRepositoryImpl : BoardRepository {
             Resource.Success(Unit)
         } catch (e: Exception) {
             Resource.Error(e.message ?: "Could not update community")
+        }
+    }
+
+    override suspend fun initializeData(): Resource<Unit> {
+        return try {
+            // Seed Communities if empty
+            val communitySnapshot = communitiesCollection.get().await()
+            if (communitySnapshot.isEmpty) {
+                val defaultCommunities = listOf(
+                    Community("General", "Public board for everyone", "system"),
+                    Community("BSIT", "Information Technology Department", "system"),
+                    Community("BSBA", "Business Administration Department", "system"),
+                    Community("BEED", "Education Department", "system"),
+                    Community("BSSW", "Social Work Department", "system")
+                )
+                defaultCommunities.forEach { 
+                    communitiesCollection.document(it.name).set(it).await()
+                }
+            }
+
+            // Seed Posts if empty
+            val postSnapshot = postsCollection.limit(1).get().await()
+            if (postSnapshot.isEmpty) {
+                val welcomePost = Post(
+                    title = "Welcome to CampusBoard",
+                    content = "This is the first post in your community. Feel free to add more!",
+                    author = "System Admin",
+                    community = "General",
+                    type = PostType.NEWS
+                )
+                postsCollection.document(welcomePost.id).set(welcomePost).await()
+            }
+            Resource.Success(Unit)
+        } catch (e: Exception) {
+            Resource.Error(e.message ?: "Failed to initialize data")
         }
     }
 }

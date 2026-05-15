@@ -26,4 +26,5 @@ interface BoardRepository {
     fun getCommunities(): Flow<List<Community>>
     suspend fun createCommunity(community: Community): Resource<Unit>
     suspend fun updateCommunity(community: Community): Resource<Unit>
+    suspend fun initializeData(): Resource<Unit>
 }
