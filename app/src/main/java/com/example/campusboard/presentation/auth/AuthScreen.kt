@@ -1,6 +1,7 @@
 package com.example.campusboard.presentation.auth
 
 import android.content.Context
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -21,6 +22,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.credentials.CredentialManager
 import androidx.credentials.GetCredentialRequest
 import androidx.credentials.exceptions.GetCredentialException
@@ -30,19 +32,19 @@ import kotlinx.coroutines.launch
 
 @Composable
 fun GridBackground(modifier: Modifier = Modifier) {
-    val gridColor = Color(0xFFE3F2FD) 
+    val gridColor = Color(0xFFE3F2FD)
     Canvas(modifier = modifier.fillMaxSize().background(Color.White)) {
         val step = 30.dp.toPx()
         val width = size.width
         val height = size.height
         var y = 0f
         while (y < height) {
-            drawLine(color = gridColor, start = Offset(0f, y), end = Offset(width, y), strokeWidth = 1f)
+            drawLine(color = gridColor, start = Offset(0f, y), end = Offset(width, y), strokeWidth = 1.dp.toPx())
             y += step
         }
         var x = 0f
         while (x < width) {
-            drawLine(color = gridColor, start = Offset(x, 0f), end = Offset(x, height), strokeWidth = 1f)
+            drawLine(color = gridColor, start = Offset(x, 0f), end = Offset(x, height), strokeWidth = 1.dp.toPx())
             x += step
         }
     }
@@ -59,7 +61,7 @@ fun AuthScreen(viewModel: AuthViewModel) {
     var username by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var confirmPassword by remember { mutableStateOf("") }
-    var staySignedIn by remember { mutableStateOf(false) }
+    var staySignedIn by remember { mutableStateOf(state.staySignedIn) }
     var passwordVisible by remember { mutableStateOf(false) }
     var confirmPasswordVisible by remember { mutableStateOf(false) }
     val communities = listOf("BSIT", "BSBA", "BEED", "BSSW")
@@ -81,13 +83,14 @@ fun AuthScreen(viewModel: AuthViewModel) {
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
-                colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.9f))
+                colors = CardDefaults.cardColors(containerColor = Color.White)
             ) {
                 Column(modifier = Modifier.padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(
+                        Text(
                         text = if (state.isLoginMode) "Login" else "Register",
                         style = MaterialTheme.typography.headlineMedium,
-                        fontWeight = FontWeight.Bold
+                        fontWeight = FontWeight.Black,
+                        color = Color(0xFF0D47A1)
                     )
                     Spacer(modifier = Modifier.height(24.dp))
                     
@@ -95,24 +98,51 @@ fun AuthScreen(viewModel: AuthViewModel) {
                         OutlinedTextField(
                             value = email,
                             onValueChange = { email = it },
-                            label = { Text("Email") },
+                            label = { Text("Email", fontWeight = FontWeight.Medium) },
                             modifier = Modifier.fillMaxWidth(),
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email)
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = Color(0xFF1E293B),
+                                unfocusedTextColor = Color(0xFF1E293B),
+                                focusedBorderColor = Color(0xFF0D47A1),
+                                unfocusedBorderColor = Color(0xFF64748B),
+                                focusedLabelColor = Color(0xFF0D47A1),
+                                unfocusedLabelColor = Color(0xFF64748B),
+                                cursorColor = Color(0xFF0D47A1)
+                            )
                         )
                     } else {
                         OutlinedTextField(
                             value = username,
                             onValueChange = { username = it },
-                            label = { Text("Username") },
-                            modifier = Modifier.fillMaxWidth()
+                            label = { Text("Username", fontWeight = FontWeight.Medium) },
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = Color(0xFF1E293B),
+                                unfocusedTextColor = Color(0xFF1E293B),
+                                focusedBorderColor = Color(0xFF0D47A1),
+                                unfocusedBorderColor = Color(0xFF64748B),
+                                focusedLabelColor = Color(0xFF0D47A1),
+                                unfocusedLabelColor = Color(0xFF64748B),
+                                cursorColor = Color(0xFF0D47A1)
+                            )
                         )
                         Spacer(modifier = Modifier.height(12.dp))
                         OutlinedTextField(
                             value = email,
                             onValueChange = { email = it },
-                            label = { Text("Email") },
+                            label = { Text("Email", fontWeight = FontWeight.Medium) },
                             modifier = Modifier.fillMaxWidth(),
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email)
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = Color(0xFF1E293B),
+                                unfocusedTextColor = Color(0xFF1E293B),
+                                focusedBorderColor = Color(0xFF0D47A1),
+                                unfocusedBorderColor = Color(0xFF64748B),
+                                focusedLabelColor = Color(0xFF0D47A1),
+                                unfocusedLabelColor = Color(0xFF64748B),
+                                cursorColor = Color(0xFF0D47A1)
+                            )
                         )
                     }
 
@@ -120,16 +150,25 @@ fun AuthScreen(viewModel: AuthViewModel) {
                     OutlinedTextField(
                         value = password,
                         onValueChange = { password = it },
-                        label = { Text("Password") },
+                        label = { Text("Password", fontWeight = FontWeight.Medium) },
                         modifier = Modifier.fillMaxWidth(),
                         visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                         trailingIcon = {
                             val image = if (passwordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff
                             IconButton(onClick = { passwordVisible = !passwordVisible }) {
-                                Icon(imageVector = image, contentDescription = null)
+                                Icon(imageVector = image, contentDescription = null, tint = Color(0xFF475569))
                             }
-                        }
+                        },
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Color(0xFF1E293B),
+                            unfocusedTextColor = Color(0xFF1E293B),
+                            focusedBorderColor = Color(0xFF0D47A1),
+                            unfocusedBorderColor = Color(0xFF64748B),
+                            focusedLabelColor = Color(0xFF0D47A1),
+                            unfocusedLabelColor = Color(0xFF64748B),
+                            cursorColor = Color(0xFF0D47A1)
+                        )
                     )
                     
                     if (!state.isLoginMode) {
@@ -137,23 +176,39 @@ fun AuthScreen(viewModel: AuthViewModel) {
                         OutlinedTextField(
                             value = confirmPassword,
                             onValueChange = { confirmPassword = it },
-                            label = { Text("Confirm Password") },
+                            label = { Text("Confirm Password", fontWeight = FontWeight.Medium) },
                             modifier = Modifier.fillMaxWidth(),
                             visualTransformation = if (confirmPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                             trailingIcon = {
                                 val image = if (confirmPasswordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff
                                 IconButton(onClick = { confirmPasswordVisible = !confirmPasswordVisible }) {
-                                    Icon(imageVector = image, contentDescription = null)
+                                    Icon(imageVector = image, contentDescription = null, tint = Color(0xFF475569))
                                 }
-                            }
+                            },
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = Color(0xFF1E293B),
+                                unfocusedTextColor = Color(0xFF1E293B),
+                                focusedBorderColor = Color(0xFF0D47A1),
+                                unfocusedBorderColor = Color(0xFF64748B),
+                                focusedLabelColor = Color(0xFF0D47A1),
+                                unfocusedLabelColor = Color(0xFF64748B),
+                                cursorColor = Color(0xFF0D47A1)
+                            )
                         )
                     }
 
-                    if (state.isLoginMode) {
+                    if (true) { // Always show stay signed in option
                         Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                            Checkbox(checked = staySignedIn, onCheckedChange = { staySignedIn = it })
-                            Text("Stay signed in")
+                            Checkbox(
+                                checked = staySignedIn, 
+                                onCheckedChange = { 
+                                    staySignedIn = it 
+                                    viewModel.onEvent(AuthEvent.ToggleStaySignedIn)
+                                },
+                                colors = CheckboxDefaults.colors(checkedColor = Color(0xFF0D47A1))
+                            )
+                            Text("Stay signed in", color = Color(0xFF334155), fontWeight = FontWeight.Medium)
                         }
                     }
                     
@@ -167,10 +222,11 @@ fun AuthScreen(viewModel: AuthViewModel) {
                                 if (state.isLoginMode) viewModel.onEvent(AuthEvent.Login(email, password, staySignedIn))
                                 else viewModel.onEvent(AuthEvent.Register(email, username, password, confirmPassword))
                             },
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(8.dp)
+                            modifier = Modifier.fillMaxWidth().height(50.dp),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0D47A1))
                         ) {
-                            Text(if (state.isLoginMode) "Login" else "Register")
+                            Text(if (state.isLoginMode) "Login" else "Register", fontWeight = FontWeight.Bold, fontSize = 16.sp)
                         }
                         
                         Spacer(modifier = Modifier.height(12.dp))
@@ -181,18 +237,29 @@ fun AuthScreen(viewModel: AuthViewModel) {
                                     handleGoogleAuth(context, viewModel, state.isLoginMode)
                                 }
                             },
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(8.dp)
+                            modifier = Modifier.fillMaxWidth().height(50.dp),
+                            shape = RoundedCornerShape(12.dp),
+                            border = BorderStroke(1.dp, Color(0xFFE2E8F0))
                         ) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text("G", fontWeight = FontWeight.Bold, color = Color.Blue) 
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(if (state.isLoginMode) "Sign in with Google" else "Sign up with Google")
+                                Text("G", fontWeight = FontWeight.Black, color = Color(0xFF0D47A1), fontSize = 18.sp)
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Text(
+                                    if (state.isLoginMode) "Sign in with Google" else "Sign up with Google",
+                                    color = Color(0xFF1E293B),
+                                    fontWeight = FontWeight.Bold
+                                )
                             }
                         }
                         
-                        TextButton(onClick = { viewModel.onEvent(AuthEvent.ToggleMode) }) {
-                            Text(if (state.isLoginMode) "Don't have an account? Register" else "Already have an account? Login")
+                        TextButton(
+                            onClick = { viewModel.onEvent(AuthEvent.ToggleMode) },
+                            colors = ButtonDefaults.textButtonColors(contentColor = Color(0xFF0D47A1))
+                        ) {
+                            Text(
+                                if (state.isLoginMode) "Don't have an account? Register" else "Already have an account? Login",
+                                fontWeight = FontWeight.Bold
+                            )
                         }
                     }
                     
@@ -255,14 +322,20 @@ private suspend fun handleGoogleAuth(
         val credential = result.credential
         if (credential is GoogleIdTokenCredential) {
             if (isLoginMode) {
-                viewModel.onEvent(AuthEvent.SignInWithGoogle(credential.idToken))
+                viewModel.onEvent(AuthEvent.SignInWithGoogle(credential.idToken, viewModel.state.value.staySignedIn))
             } else {
                 val googleName = credential.displayName ?: "Google User"
-                viewModel.onEvent(AuthEvent.SignUpWithGoogle(credential.idToken, googleName))
+                viewModel.onEvent(AuthEvent.SignUpWithGoogle(credential.idToken, googleName, viewModel.state.value.staySignedIn))
             }
         }
     } catch (e: GetCredentialException) {
-        viewModel.setError("Google Auth Error: ${e.message}")
+        val errorMessage = when (e.type) {
+            "androidx.credentials.TYPE_GET_CREDENTIAL_UNSUPPORTED_EXCEPTION" -> "Credentials not supported on this device"
+            "com.google.android.gms.common.api.ApiException: 10" -> "Developer Error: Check SHA-1 and Client ID in Firebase Console"
+            "com.google.android.gms.common.api.ApiException: 7" -> "Network Error: Please check your connection"
+            else -> "Google Auth Error: ${e.message}"
+        }
+        viewModel.setError(errorMessage)
     } catch (e: Exception) {
         viewModel.setError("An unexpected error occurred: ${e.message}")
     }

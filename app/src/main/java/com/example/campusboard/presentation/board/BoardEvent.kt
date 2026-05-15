@@ -1,17 +1,18 @@
 package com.example.campusboard.presentation.board
 
+import com.example.campusboard.domain.model.Community
 import com.example.campusboard.domain.model.PostType
 import com.example.campusboard.domain.model.Role
 
 sealed class BoardEvent {
     data class SelectCommunity(val community: String) : BoardEvent()
-    data class CreatePost(val title: String, val content: String, val type: PostType, val color: Int, val timestamp: Long) : BoardEvent()
+    data class CreatePost(val title: String, val content: String, val type: PostType, val color: Long, val timestamp: Long, val community: String, val isBroadcast: Boolean = false) : BoardEvent()
     data class RequestDeletePost(val postId: String) : BoardEvent()
     object ConfirmDeletePost : BoardEvent()
     object CancelDeletePost : BoardEvent()
     
     data class RequestUpdateRole(val userId: String, val newRole: Role) : BoardEvent()
-    object ConfirmUpdateRole : BoardEvent()
+    data class ConfirmUpdateRole(val community: String? = null) : BoardEvent()
     object CancelUpdateRole : BoardEvent()
     
     object RequestLogout : BoardEvent()
@@ -24,9 +25,27 @@ sealed class BoardEvent {
 
     // Join Request Events
     data class SubmitJoinRequest(val community: String) : BoardEvent()
-    data class AcceptJoinRequest(val requestId: String, val userEmail: String, val community: String) : BoardEvent()
+    data class CancelJoinRequest(val requestId: String) : BoardEvent()
+    data class AcceptJoinRequest(val requestId: String, val userId: String, val community: String) : BoardEvent()
     data class RejectJoinRequest(val requestId: String) : BoardEvent()
+
+    // Post Management
+    data class AcceptPostRequest(val postId: String, val community: String) : BoardEvent()
+    data class RejectPostRequest(val postId: String) : BoardEvent()
 
     // Community Management
     data class CreateCommunity(val name: String, val description: String) : BoardEvent()
+    data class UpdateCommunity(val name: String, val description: String) : BoardEvent()
+    data class OpenCommunityEditor(val community: Community) : BoardEvent()
+    object CloseCommunityEditor : BoardEvent()
+    data class ViewCommunityMembers(val community: Community) : BoardEvent()
+    data class OpenPermissionManager(val user: com.example.campusboard.domain.model.User) : BoardEvent()
+    object ClosePermissionManager : BoardEvent()
+    data class RequestToggleCommunityManagement(val userId: String, val community: String) : BoardEvent()
+    data class ToggleCommunityManagement(val userId: String, val community: String) : BoardEvent()
+    object CancelToggleCommunityManagement : BoardEvent()
+    data class ToggleGlobalPermission(val userId: String, val permission: String) : BoardEvent()
+    data class ToggleUserSuspension(val userId: String) : BoardEvent()
+    object Refresh : BoardEvent()
+    object DismissError : BoardEvent()
 }

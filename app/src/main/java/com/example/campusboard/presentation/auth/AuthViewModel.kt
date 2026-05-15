@@ -4,6 +4,8 @@ import androidx.compose.runtime.State
 import androidx.compose.runtime.mutableStateOf
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.campusboard.domain.model.Role
+import com.example.campusboard.domain.model.User
 import com.example.campusboard.domain.repository.AuthRepository
 import com.example.campusboard.domain.use_case.LoginUseCase
 import com.example.campusboard.domain.use_case.RegisterUseCase
@@ -24,6 +26,9 @@ class AuthViewModel(
             is AuthEvent.ToggleMode -> {
                 _state.value = _state.value.copy(isLoginMode = !_state.value.isLoginMode, error = null)
             }
+            is AuthEvent.ToggleStaySignedIn -> {
+                _state.value = _state.value.copy(staySignedIn = !_state.value.staySignedIn)
+            }
             is AuthEvent.Login -> {
                 login(event.email, event.password, event.staySignedIn)
             }
@@ -31,10 +36,10 @@ class AuthViewModel(
                 register(event.email, username = event.username, event.password, event.confirmPassword)
             }
             is AuthEvent.SignInWithGoogle -> {
-                signInWithGoogle(event.idToken)
+                signInWithGoogle(event.idToken, event.staySignedIn)
             }
             is AuthEvent.SignUpWithGoogle -> {
-                signUpWithGoogle(event.idToken, event.username)
+                signUpWithGoogle(event.idToken, event.username, event.staySignedIn)
             }
             is AuthEvent.SelectCommunity -> {
                 selectCommunity(event.community)
@@ -71,7 +76,13 @@ class AuthViewModel(
             _state.value = _state.value.copy(isLoading = true, error = null)
             when (val result = registerUseCase(email, username, password, confirmPassword)) {
                 is Resource.Success -> {
-                    _state.value = _state.value.copy(isLoading = false, user = result.data, needsCommunitySelection = true)
+                    val user = result.data
+                    val needsSelection = user?.role == Role.USER
+                    _state.value = _state.value.copy(
+                        isLoading = false,
+                        user = user,
+                        needsCommunitySelection = needsSelection
+                    )
                 }
                 is Resource.Error -> {
                     _state.value = _state.value.copy(isLoading = false, error = result.message)
@@ -83,10 +94,10 @@ class AuthViewModel(
         }
     }
 
-    private fun signInWithGoogle(idToken: String) {
+    private fun signInWithGoogle(idToken: String, staySignedIn: Boolean) {
         viewModelScope.launch {
             _state.value = _state.value.copy(isLoading = true, error = null)
-            when (val result = authRepository.signInWithGoogle(idToken)) {
+            when (val result = authRepository.signInWithGoogle(idToken, staySignedIn)) {
                 is Resource.Success -> {
                     _state.value = _state.value.copy(isLoading = false, user = result.data)
                 }
@@ -100,12 +111,18 @@ class AuthViewModel(
         }
     }
 
-    private fun signUpWithGoogle(idToken: String, username: String) {
+    private fun signUpWithGoogle(idToken: String, username: String, staySignedIn: Boolean) {
         viewModelScope.launch {
             _state.value = _state.value.copy(isLoading = true, error = null)
-            when (val result = authRepository.signUpWithGoogle(idToken, username)) {
+            when (val result = authRepository.signUpWithGoogle(idToken, username, staySignedIn)) {
                 is Resource.Success -> {
-                    _state.value = _state.value.copy(isLoading = false, user = result.data, needsCommunitySelection = true)
+                    val user = result.data
+                    val needsSelection = user?.role == Role.USER
+                    _state.value = _state.value.copy(
+                        isLoading = false,
+                        user = user,
+                        needsCommunitySelection = needsSelection
+                    )
                 }
                 is Resource.Error -> {
                     _state.value = _state.value.copy(isLoading = false, error = result.message)
@@ -121,7 +138,7 @@ class AuthViewModel(
         viewModelScope.launch {
             val user = _state.value.user ?: return@launch
             _state.value = _state.value.copy(isLoading = true)
-            when (val result = authRepository.joinCommunity(user.email, community)) {
+            when (val result = authRepository.joinCommunity(user.id, community)) {
                 is Resource.Success -> {
                     _state.value = _state.value.copy(isLoading = false, user = result.data, needsCommunitySelection = false)
                 }

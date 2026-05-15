@@ -59,11 +59,11 @@ class MainActivity : ComponentActivity() {
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
                     Box(modifier = Modifier.padding(innerPadding)) {
                         if (authState.user != null && !authState.needsCommunitySelection) {
-                            val boardViewModel = remember(authState.user) {
+                            val boardViewModel = remember(authState.user.id) {
                                 BoardViewModel(
                                     authRepository = authRepository,
                                     boardRepository = boardRepository,
-                                    user = authState.user,
+                                    initialUser = authState.user,
                                     onLogout = { authViewModel.onEvent(AuthEvent.Logout) }
                                 )
                             }

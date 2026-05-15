@@ -7,5 +7,6 @@ data class AuthState(
     val user: User? = null,
     val error: String? = null,
     val isLoginMode: Boolean = true,
+    val staySignedIn: Boolean = true,
     val needsCommunitySelection: Boolean = false
 )

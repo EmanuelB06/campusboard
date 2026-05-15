@@ -1,10 +1,13 @@
 package com.example.campusboard.domain.model
 
+import com.google.firebase.firestore.IgnoreExtraProperties
+
+@IgnoreExtraProperties
 data class Community(
-    val name: String = "",
-    val description: String = "",
-    val creatorEmail: String = "",
-    val timestamp: Long = System.currentTimeMillis()
+    var name: String = "",
+    var description: String = "",
+    var creatorEmail: String = "",
+    var timestamp: Long = System.currentTimeMillis()
 ) {
-    constructor() : this("", "", "", System.currentTimeMillis())
+    constructor() : this(name = "")
 }

@@ -1,21 +1,32 @@
 package com.example.campusboard.domain.model
 
 import java.util.UUID
+import com.google.firebase.firestore.IgnoreExtraProperties
 
 enum class PostType {
-    NEWS, ALERT, OPPORTUNITY, NOTES
+    NEWS, ALERT, EVENT, OPPORTUNITY, NOTES, OTHERS
 }
 
+enum class PostStatus {
+    PENDING, APPROVED, REJECTED
+}
+
+@IgnoreExtraProperties
 data class Post(
-    val id: String = UUID.randomUUID().toString(),
-    val title: String = "",
-    val content: String = "",
-    val author: String = "",
-    val community: String = "",
-    val type: PostType = PostType.NOTES,
-    val timestamp: Long = System.currentTimeMillis(),
-    val color: Int = 0xFFFFFFFF.toInt() // Default white
+    var id: String = "",
+    var title: String = "",
+    var content: String = "",
+    var author: String = "",
+    var community: String = "",
+    var type: PostType = PostType.NOTES,
+    var status: PostStatus = PostStatus.APPROVED,
+    var timestamp: Long = System.currentTimeMillis(),
+    var color: Long = 0xFFFFFFFFL,
+    var isBroadcast: Boolean = false
 ) {
-    // No-argument constructor required for Firestore deserialization
-    constructor() : this(id = UUID.randomUUID().toString(), title = "", content = "", author = "", community = "", type = PostType.NOTES, timestamp = System.currentTimeMillis(), color = 0xFFFFFFFF.toInt())
+    init {
+        if (id.isEmpty()) {
+            id = UUID.randomUUID().toString()
+        }
+    }
 }
