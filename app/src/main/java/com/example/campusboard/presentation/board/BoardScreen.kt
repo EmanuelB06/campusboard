@@ -1,8 +1,6 @@
 package com.example.campusboard.presentation.board
 
-import android.app.NotificationChannel
-import android.app.NotificationManager
-import android.content.Context
+import android.content.pm.PackageManager
 import android.os.Build
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -18,15 +16,10 @@ import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridCells
 import androidx.compose.foundation.lazy.staggeredgrid.items
 import androidx.compose.foundation.shape.GenericShape
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.CutCornerShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.HelpOutline
-import androidx.compose.material.icons.automirrored.filled.Logout
-import androidx.compose.material.icons.automirrored.filled.StickyNote2
-import androidx.compose.material.icons.automirrored.filled.ExitToApp
+import androidx.compose.material.icons.automirrored.filled.*
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.material3.SwitchDefaults
@@ -35,7 +28,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
-import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.graphicsLayer
@@ -44,19 +36,16 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import com.example.campusboard.ui.theme.isLight
 import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
-import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.drawscope.Stroke
 import com.example.campusboard.presentation.auth.GoogleSignUpPasswordDialog
 import com.example.campusboard.domain.model.Post
@@ -64,7 +53,6 @@ import com.example.campusboard.domain.model.PostType
 import com.example.campusboard.domain.model.Role
 import com.example.campusboard.domain.model.Community
 import com.example.campusboard.domain.model.User
-import com.example.campusboard.CampusBoardApp
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
@@ -107,26 +95,45 @@ private fun PermissionSwitch(
     onHelpClick: (String) -> Unit
 ) {
     val user = state.userToManagePermissions ?: return
+    val isEnabled = user.safePermissions().contains(permission)
+    
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 4.dp),
+            .clip(RoundedCornerShape(12.dp))
+            .clickable { viewModel.onEvent(BoardEvent.ToggleGlobalPermission(user.id, permission)) }
+            .padding(vertical = 6.dp, horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Switch(
-            checked = user.safePermissions().contains(permission),
+            checked = isEnabled,
             onCheckedChange = { viewModel.onEvent(BoardEvent.ToggleGlobalPermission(user.id, permission)) },
-            colors = SwitchDefaults.colors(checkedThumbColor = Color(0xFF0D47A1))
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = Color.White,
+                checkedTrackColor = Color(0xFF0D47A1),
+                uncheckedThumbColor = Color.White,
+                uncheckedTrackColor = Color(0xFFCBD5E1)
+            ),
+            modifier = Modifier.scale(0.85f)
         )
-        Spacer(Modifier.width(12.dp))
+        Spacer(Modifier.width(8.dp))
         Text(
             label,
-            modifier = Modifier.weight(1f).clickable { viewModel.onEvent(BoardEvent.ToggleGlobalPermission(user.id, permission)) },
+            modifier = Modifier.weight(1f),
             style = MaterialTheme.typography.bodyMedium,
-            fontWeight = FontWeight.Medium
+            fontWeight = if (isEnabled) FontWeight.Bold else FontWeight.Medium,
+            color = if (isEnabled) Color(0xFF0D47A1) else Color(0xFF1E293B)
         )
-        IconButton(onClick = { onHelpClick(permission) }) {
-            Icon(Icons.AutoMirrored.Filled.HelpOutline, null, modifier = Modifier.size(18.dp), tint = Color(0xFF64748B))
+        IconButton(
+            onClick = { onHelpClick(permission) },
+            modifier = Modifier.size(32.dp)
+        ) {
+            Icon(
+                Icons.AutoMirrored.Filled.HelpOutline, 
+                null, 
+                modifier = Modifier.size(16.dp), 
+                tint = Color(0xFF64748B).copy(alpha = 0.6f)
+            )
         }
     }
 }
@@ -181,11 +188,39 @@ fun BoardScreen(viewModel: BoardViewModel) {
     val permissionLauncher = rememberLauncherForActivityResult(contract = ActivityResultContracts.RequestPermission()) { }
     LaunchedEffect(Unit) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            permissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+            val hasPermission = ContextCompat.checkSelfPermission(
+                context,
+                android.Manifest.permission.POST_NOTIFICATIONS
+            ) == PackageManager.PERMISSION_GRANTED
+
+            if (!hasPermission) {
+                permissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+            }
         }
     }
 
     val availableCommunities = state.communities.map { it.name }
+
+    val pendingCount = remember(state.joinRequests, state.pendingPosts, state.currentUser) {
+        val canManageRequestsGlobally = state.currentUser?.role == Role.SUPER_ADMIN || 
+                                       state.currentUser?.safePermissions()?.contains("can_manage_requests_globally") == true
+        val canApprovePostsGlobally = state.currentUser?.role == Role.SUPER_ADMIN || 
+                                      state.currentUser?.safePermissions()?.contains("can_approve_posts_globally") == true
+        
+        val joinReqCount = if (canManageRequestsGlobally) {
+            state.joinRequests.size
+        } else if (state.currentUser?.role == Role.ADMIN) {
+            state.joinRequests.count { state.currentUser.safeManaged().contains(it.community) }
+        } else 0
+
+        val postApprCount = if (canApprovePostsGlobally) {
+            state.pendingPosts.size
+        } else if (state.currentUser?.role == Role.ADMIN) {
+            state.pendingPosts.count { state.currentUser.safeManaged().contains(it.community) }
+        } else 0
+        
+        joinReqCount + postApprCount
+    }
 
     if (state.showSetPasswordDialog) {
         GoogleSignUpPasswordDialog(
@@ -278,7 +313,7 @@ fun BoardScreen(viewModel: BoardViewModel) {
             onDismissRequest = { viewModel.onEvent(BoardEvent.ClosePermissionManager) },
             title = {
                 Column {
-                    Text("Manage Permissions", fontWeight = FontWeight.ExtraBold)
+                    Text("Manage Permissions", fontWeight = FontWeight.ExtraBold, color = Color(0xFF1E293B))
                     Text(
                         targetUser.username,
                         style = MaterialTheme.typography.bodySmall,
@@ -287,30 +322,29 @@ fun BoardScreen(viewModel: BoardViewModel) {
                 }
             },
             text = {
+                val isSuperAdmin = state.currentUser?.role == Role.SUPER_ADMIN
+                val hasGlobalPerms = state.currentUser?.safePermissions()?.contains("can_manage_permissions") == true
+                val canManageGlobal = isSuperAdmin || hasGlobalPerms
+                
                 val hasCommunityManagePerm = state.currentUser?.safePermissions()?.contains("can_manage_community_users") == true
                 val isTargetUser = targetUser.role == Role.USER
 
-                val canManageGlobal = state.currentUser?.role == Role.SUPER_ADMIN ||
-                                     state.currentUser?.safePermissions()?.contains("can_manage_permissions") == true
-                val canManageRoles = state.currentUser?.role == Role.SUPER_ADMIN ||
-                                   state.currentUser?.safePermissions()?.contains("can_manage_roles") == true ||
-                                   (hasCommunityManagePerm && isTargetUser)
-                val canManageBypass = state.currentUser?.role == Role.SUPER_ADMIN ||
-                                    state.currentUser?.safePermissions()?.contains("can_manage_bypass_approval") == true ||
-                                    (hasCommunityManagePerm && isTargetUser)
-
                 LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 450.dp)) {
-                    // 1. GLOBAL PERMISSIONS - Only for Superadmin managing an Admin
-                    if (state.currentUser?.role == Role.SUPER_ADMIN && targetUser.role == Role.ADMIN) {
+                    // 1. GLOBAL PERMISSIONS - Platform Level (Superadmin managing an Admin)
+                    if (canManageGlobal && targetUser.role == Role.ADMIN) {
                         item {
                             Text(
-                                "GLOBAL PERMISSIONS",
+                                "ADMINISTRATIVE CAPABILITIES",
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.Black,
-                                color = Color(0xFF475569)
+                                color = Color(0xFF64748B),
+                                letterSpacing = 1.sp
                             )
-                            Spacer(Modifier.height(8.dp))
+                            Spacer(Modifier.height(12.dp))
 
+                            Text("PLATFORM-WIDE CONTROL", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = Color(0xFF0D47A1))
+                            Spacer(Modifier.height(8.dp))
+                            
                             val platformPerms = listOf(
                                 "can_create_community" to "Create New Communities",
                                 "can_edit_any_community" to "Edit All Community Details",
@@ -322,23 +356,22 @@ fun BoardScreen(viewModel: BoardViewModel) {
                                 "can_send_global_broadcast" to "Send Global Broadcasts"
                             )
 
-                            val communityPerms = listOf(
-                                "can_manage_community_users" to "Manage Users in Community",
-                                "can_approve_community_posts" to "Approve Community Posts",
-                                "can_manage_community_requests" to "Manage Community Requests",
-                                "can_delete_community_posts" to "Delete Community Posts",
-                                "can_manage_bypass_approval" to "Manage Community Bypass"
-                            )
-
-                            Text("PLATFORM-WIDE CONTROL", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = Color(0xFF64748B))
-                            Spacer(Modifier.height(8.dp))
                             platformPerms.forEach { (perm, label) -> 
                                 PermissionSwitch(perm, label, state, viewModel) { helpTextToShow = permissionDescriptions[it] }
                             }
 
-                            Spacer(Modifier.height(16.dp))
-                            Text("LOCAL MODERATION (Assigned Boards)", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = Color(0xFF64748B))
+                            Spacer(Modifier.height(20.dp))
+                            Text("LOCAL MODERATION (Assigned Boards)", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = Color(0xFF0D47A1))
                             Spacer(Modifier.height(8.dp))
+                            
+                            val communityPerms = listOf(
+                                "can_manage_community_users" to "Manage Users & Roles",
+                                "can_approve_community_posts" to "Approve Local Posts",
+                                "can_manage_community_requests" to "Manage Local Requests",
+                                "can_delete_community_posts" to "Delete Local Posts",
+                                "can_manage_bypass_approval" to "Manage Local Bypass"
+                            )
+
                             communityPerms.forEach { (perm, label) -> 
                                 PermissionSwitch(perm, label, state, viewModel) { helpTextToShow = permissionDescriptions[it] }
                             }
@@ -349,14 +382,15 @@ fun BoardScreen(viewModel: BoardViewModel) {
                         }
                     }
 
-                    // 2. ACCOUNT STATUS - Visible to Superadmin for both Admins and Users
-                    if (state.currentUser?.role == Role.SUPER_ADMIN) {
+                    // 2. ACCOUNT STATUS - Superadmin only
+                    if (isSuperAdmin) {
                         item {
                             Text(
-                                "ACCOUNT STATUS",
+                                "SECURITY & STATUS",
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.Black,
-                                color = Color(0xFF475569)
+                                color = Color(0xFF64748B),
+                                letterSpacing = 1.sp
                             )
                             Spacer(Modifier.height(8.dp))
 
@@ -368,10 +402,13 @@ fun BoardScreen(viewModel: BoardViewModel) {
                             ) {
                                 Switch(
                                     checked = targetUser.isSuspended,
-                                    onCheckedChange = { isChecked ->
-                                        viewModel.onEvent(BoardEvent.ToggleUserSuspension(targetUser.id))
-                                    },
-                                    colors = SwitchDefaults.colors(checkedThumbColor = Color(0xFFEF4444))
+                                    onCheckedChange = { viewModel.onEvent(BoardEvent.ToggleUserSuspension(targetUser.id)) },
+                                    colors = SwitchDefaults.colors(
+                                        checkedThumbColor = Color.White,
+                                        checkedTrackColor = Color(0xFFEF4444),
+                                        uncheckedThumbColor = Color.White,
+                                        uncheckedTrackColor = Color(0xFFCBD5E1)
+                                    )
                                 )
                                 Spacer(Modifier.width(12.dp))
                                 Text(
@@ -379,7 +416,7 @@ fun BoardScreen(viewModel: BoardViewModel) {
                                     modifier = Modifier.weight(1f)
                                         .clickable { viewModel.onEvent(BoardEvent.ToggleUserSuspension(targetUser.id)) },
                                     style = MaterialTheme.typography.bodyMedium,
-                                    fontWeight = FontWeight.Medium,
+                                    fontWeight = FontWeight.Bold,
                                     color = if (targetUser.isSuspended) Color(0xFFEF4444) else Color(0xFF10B981)
                                 )
                                 IconButton(onClick = { helpTextToShow = permissionDescriptions["is_suspended"] }) {
@@ -396,22 +433,31 @@ fun BoardScreen(viewModel: BoardViewModel) {
                     // 3. COMMUNITY SPECIFIC PERMISSIONS (Post without approval)
                     item {
                         Text(
-                            "POST WITHOUT APPROVAL",
+                            "TRUSTED POSTING (BYPASS)",
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.Black,
-                            color = Color(0xFF475569)
+                            color = Color(0xFF64748B),
+                            letterSpacing = 1.sp
                         )
                         Spacer(Modifier.height(8.dp))
 
                         val displayComms = targetUser.safeJoined().filter { it != "General" }.distinct()
-                        
+
                         displayComms.forEach { communityName ->
-                            val isManaged = targetUser.role == Role.ADMIN && targetUser.safeManaged().contains(communityName)
+                            val isManagedByTarget = targetUser.role == Role.ADMIN && targetUser.safeManaged().contains(communityName)
                             val perm = "bypass_approval_$communityName"
-                            val hasPerm = targetUser.safePermissions().contains(perm) || isManaged
+                            val hasPerm = targetUser.safePermissions().contains(perm) || isManagedByTarget
+
+                            // A user can manage this bypass if:
+                            // 1. They are Super Admin
+                            // 2. They have global bypass management perm
+                            // 3. They are an Admin of THIS specific community and have local user management perm
+                            val isManagerOfThisComm = state.currentUser?.role == Role.ADMIN && 
+                                                    state.currentUser.safeManaged().contains(communityName)
                             
-                            val canManageThisBypass = canManageGlobal || 
-                                                    state.currentUser?.safePermissions()?.contains("can_manage_bypass_approval") == true
+                            val canManageThisSpecificBypass = canManageGlobal || 
+                                                           state.currentUser?.safePermissions()?.contains("can_manage_bypass_approval") == true ||
+                                                           (hasCommunityManagePerm && isManagerOfThisComm)
 
                             Row(
                                 modifier = Modifier
@@ -421,21 +467,21 @@ fun BoardScreen(viewModel: BoardViewModel) {
                             ) {
                                 Switch(
                                     checked = hasPerm,
-                                    enabled = canManageThisBypass && !isManaged,
-                                    onCheckedChange = { 
+                                    enabled = canManageThisSpecificBypass && !isManagedByTarget,
+                                    onCheckedChange = {
                                         viewModel.onEvent(BoardEvent.ToggleGlobalPermission(targetUser.id, perm))
                                     },
-                                    colors = SwitchDefaults.colors(checkedThumbColor = if (isManaged) Color(0xFF10B981) else Color(0xFF0D47A1))
+                                    colors = SwitchDefaults.colors(checkedThumbColor = if (isManagedByTarget) Color(0xFF10B981) else Color(0xFF0D47A1))
                                 )
                                 Spacer(Modifier.width(12.dp))
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
                                         "Bypass approval in $communityName",
-                                        style = MaterialTheme.typography.bodyMedium, 
+                                        style = MaterialTheme.typography.bodyMedium,
                                         fontWeight = FontWeight.Medium,
-                                        color = if (isManaged) Color(0xFF059669) else Color.Unspecified
+                                        color = if (isManagedByTarget) Color(0xFF059669) else Color(0xFF1E293B)
                                     )
-                                    if (isManaged) {
+                                    if (isManagedByTarget) {
                                         Text("Automatic (Community Manager)", style = MaterialTheme.typography.labelSmall, color = Color(0xFF10B981))
                                     }
                                 }
@@ -445,21 +491,25 @@ fun BoardScreen(viewModel: BoardViewModel) {
                             }
                         }
 
-                        if (targetUser.safeJoined().isEmpty()) {
+                        if (displayComms.isEmpty()) {
                             Text("User hasn't joined any restricted communities", style = MaterialTheme.typography.bodySmall, color = Color(0xFF64748B), fontStyle = androidx.compose.ui.text.font.FontStyle.Italic)
                         }
+                    }
 
-                        if (canManageRoles && targetUser.role == Role.ADMIN) {
+                    // 4. ASSIGNED COMMUNITIES - Only for Super Admins managing Admins
+                    if (isSuperAdmin && targetUser.role == Role.ADMIN) {
+                        item {
                             Spacer(Modifier.height(16.dp))
                             HorizontalDivider(color = Color(0xFFF1F5F9))
                             Spacer(Modifier.height(16.dp))
 
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text(
-                                    "ASSIGNED COMMUNITIES", 
-                                    style = MaterialTheme.typography.labelSmall, 
+                                    "ASSIGNED COMMUNITIES",
+                                    style = MaterialTheme.typography.labelSmall,
                                     fontWeight = FontWeight.Black,
-                                    color = Color(0xFF475569),
+                                    color = Color(0xFF64748B),
+                                    letterSpacing = 1.sp,
                                     modifier = Modifier.weight(1f)
                                 )
                                 IconButton(onClick = { helpTextToShow = permissionDescriptions["managed_communities"] }, modifier = Modifier.size(24.dp)) {
@@ -467,20 +517,14 @@ fun BoardScreen(viewModel: BoardViewModel) {
                                 }
                             }
                             Spacer(Modifier.height(8.dp))
-                            
-                            if (state.communities.isEmpty()) {
-                                Text("No communities available", color = Color(0xFF475569))
-                            }
                         }
-                    }
-                    
-                    if (canManageRoles && targetUser.role == Role.ADMIN) {
+
                         items(state.communities) { community ->
                             val isManaged = targetUser.safeManaged().contains(community.name)
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(vertical = 12.dp),
+                                    .padding(vertical = 4.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Checkbox(
@@ -495,8 +539,8 @@ fun BoardScreen(viewModel: BoardViewModel) {
                                     modifier = Modifier.weight(1f)
                                         .clickable { viewModel.onEvent(BoardEvent.RequestToggleCommunityManagement(targetUser.id, community.name)) }
                                 ) {
-                                    Text(community.name, fontWeight = FontWeight.Bold)
-                                    Text(community.description, style = MaterialTheme.typography.bodySmall, color = Color(0xFF334155), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text(community.name, fontWeight = FontWeight.Bold, color = Color(0xFF1E293B), style = MaterialTheme.typography.bodyMedium)
+                                    Text(community.description, style = MaterialTheme.typography.labelSmall, color = Color(0xFF64748B), maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 }
                             }
                         }
@@ -518,8 +562,8 @@ fun BoardScreen(viewModel: BoardViewModel) {
     if (helpTextToShow != null) {
         AlertDialog(
             onDismissRequest = { helpTextToShow = null },
-            title = { Text("Permission Detail", fontWeight = FontWeight.Bold) },
-            text = { Text(helpTextToShow!!) },
+            title = { Text("Permission Detail", fontWeight = FontWeight.Bold, color = Color(0xFF1E293B)) },
+            text = { Text(helpTextToShow!!, color = Color(0xFF334155)) },
             confirmButton = {
                 TextButton(onClick = { helpTextToShow = null }) {
                     Text("Got it", fontWeight = FontWeight.Bold, color = Color(0xFF0D47A1))
@@ -538,14 +582,14 @@ fun BoardScreen(viewModel: BoardViewModel) {
         AlertDialog(
             onDismissRequest = { viewModel.onEvent(BoardEvent.CancelUpdateRole) },
             icon = { Icon(if (isPromote) Icons.Default.ArrowUpward else Icons.Default.ArrowDownward, null, tint = if (isPromote) Color(0xFF0EA5E9) else Color(0xFFEF4444)) },
-            title = { Text(if (isPromote) "Promote to Admin" else "Demote to User", fontWeight = FontWeight.Bold) },
+            title = { Text(if (isPromote) "Promote to Admin" else "Demote to User", fontWeight = FontWeight.Bold, color = Color(0xFF1E293B)) },
             text = { 
                 Column {
-                    Text(if (isPromote) "This user will be able to manage posts in their assigned communities." else "This user will lose administrative privileges.")
+                    Text(if (isPromote) "This user will be able to manage posts in their assigned communities." else "This user will lose administrative privileges.", color = Color(0xFF334155))
                     
                     if (isPromote) {
                         Spacer(modifier = Modifier.height(16.dp))
-                        Text("Select a community for this Admin to manage:", style = MaterialTheme.typography.labelMedium)
+                        Text("Select a community for this Admin to manage:", style = MaterialTheme.typography.labelMedium, color = Color(0xFF1E293B))
                         Spacer(modifier = Modifier.height(8.dp))
                         
                         Box(modifier = Modifier.fillMaxWidth()) {
@@ -554,19 +598,19 @@ fun BoardScreen(viewModel: BoardViewModel) {
                                 modifier = Modifier.fillMaxWidth(),
                                 shape = RoundedCornerShape(12.dp)
                             ) {
-                                Text(selectedCommunity ?: "Select Community")
+                                Text(selectedCommunity ?: "Select Community", color = Color(0xFF1E293B))
                                 Spacer(modifier = Modifier.weight(1f))
-                                Icon(Icons.Default.ArrowDropDown, null)
+                                Icon(Icons.Default.ArrowDropDown, null, tint = Color(0xFF64748B))
                             }
                             
                             DropdownMenu(
                                 expanded = dropdownExpanded,
                                 onDismissRequest = { dropdownExpanded = false },
-                                modifier = Modifier.fillMaxWidth(0.7f)
+                                modifier = Modifier.fillMaxWidth(0.7f).background(Color.White)
                             ) {
                                 state.communities.forEach { community ->
                                     DropdownMenuItem(
-                                        text = { Text(community.name) },
+                                        text = { Text(community.name, color = Color(0xFF1E293B)) },
                                         onClick = {
                                             selectedCommunity = community.name
                                             dropdownExpanded = false
@@ -588,6 +632,122 @@ fun BoardScreen(viewModel: BoardViewModel) {
             },
             dismissButton = {
                 TextButton(onClick = { viewModel.onEvent(BoardEvent.CancelUpdateRole) }) { 
+                    Text("Cancel", color = Color(0xFF334155), fontWeight = FontWeight.Medium)
+                }
+            },
+            shape = RoundedCornerShape(24.dp),
+            containerColor = Color.White
+        )
+    }
+
+    if (state.postToApprove != null) {
+        AlertDialog(
+            onDismissRequest = { viewModel.onEvent(BoardEvent.CancelAcceptPost) },
+            icon = { Icon(Icons.Default.CheckCircle, null, tint = Color(0xFF10B981)) },
+            title = { Text("Approve Post", fontWeight = FontWeight.Bold) },
+            text = { Text("Are you sure you want to approve this post? It will be visible to all members of ${state.postToApprove.community}.") },
+            confirmButton = {
+                Button(
+                    onClick = { viewModel.onEvent(BoardEvent.ConfirmAcceptPost) },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981)),
+                    shape = RoundedCornerShape(12.dp)
+                ) { Text("Approve", fontWeight = FontWeight.Bold) }
+            },
+            dismissButton = {
+                TextButton(onClick = { viewModel.onEvent(BoardEvent.CancelAcceptPost) }) { 
+                    Text("Cancel", color = Color(0xFF334155), fontWeight = FontWeight.Medium)
+                }
+            },
+            shape = RoundedCornerShape(24.dp),
+            containerColor = Color.White
+        )
+    }
+
+    if (state.postToReject != null) {
+        AlertDialog(
+            onDismissRequest = { viewModel.onEvent(BoardEvent.CancelRejectPost) },
+            icon = { Icon(Icons.Default.Cancel, null, tint = Color(0xFFEF4444)) },
+            title = { Text("Reject Post", fontWeight = FontWeight.Bold) },
+            text = { 
+                Column {
+                    Text("Please provide a reason for rejecting this post (optional):")
+                    Spacer(Modifier.height(16.dp))
+                    OutlinedTextField(
+                        value = state.rejectionReason,
+                        onValueChange = { viewModel.onEvent(BoardEvent.UpdateRejectionReason(it)) },
+                        placeholder = { Text("Reason...") },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp)
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = { viewModel.onEvent(BoardEvent.ConfirmRejectPost) },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444)),
+                    shape = RoundedCornerShape(12.dp)
+                ) { Text("Reject", fontWeight = FontWeight.Bold) }
+            },
+            dismissButton = {
+                TextButton(onClick = { viewModel.onEvent(BoardEvent.CancelRejectPost) }) { 
+                    Text("Cancel", color = Color(0xFF334155), fontWeight = FontWeight.Medium)
+                }
+            },
+            shape = RoundedCornerShape(24.dp),
+            containerColor = Color.White
+        )
+    }
+
+    if (state.joinRequestToApprove != null) {
+        AlertDialog(
+            onDismissRequest = { viewModel.onEvent(BoardEvent.CancelAcceptJoinRequest) },
+            icon = { Icon(Icons.Default.GroupAdd, null, tint = Color(0xFF10B981)) },
+            title = { Text("Approve Join Request", fontWeight = FontWeight.Bold) },
+            text = { Text("Are you sure you want to let ${state.joinRequestToApprove.username} join ${state.joinRequestToApprove.community}?") },
+            confirmButton = {
+                Button(
+                    onClick = { viewModel.onEvent(BoardEvent.ConfirmAcceptJoinRequest) },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981)),
+                    shape = RoundedCornerShape(12.dp)
+                ) { Text("Approve", fontWeight = FontWeight.Bold) }
+            },
+            dismissButton = {
+                TextButton(onClick = { viewModel.onEvent(BoardEvent.CancelAcceptJoinRequest) }) { 
+                    Text("Cancel", color = Color(0xFF334155), fontWeight = FontWeight.Medium)
+                }
+            },
+            shape = RoundedCornerShape(24.dp),
+            containerColor = Color.White
+        )
+    }
+
+    if (state.joinRequestToReject != null) {
+        AlertDialog(
+            onDismissRequest = { viewModel.onEvent(BoardEvent.CancelRejectJoinRequest) },
+            icon = { Icon(Icons.Default.PersonRemove, null, tint = Color(0xFFEF4444)) },
+            title = { Text("Reject Join Request", fontWeight = FontWeight.Bold) },
+            text = { 
+                Column {
+                    Text("Please provide a reason for rejecting this request (optional):")
+                    Spacer(Modifier.height(16.dp))
+                    OutlinedTextField(
+                        value = state.rejectionReason,
+                        onValueChange = { viewModel.onEvent(BoardEvent.UpdateRejectionReason(it)) },
+                        placeholder = { Text("Reason...") },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp)
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = { viewModel.onEvent(BoardEvent.ConfirmRejectJoinRequest) },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444)),
+                    shape = RoundedCornerShape(12.dp)
+                ) { Text("Reject", fontWeight = FontWeight.Bold) }
+            },
+            dismissButton = {
+                TextButton(onClick = { viewModel.onEvent(BoardEvent.CancelRejectJoinRequest) }) {
                     Text("Cancel", color = Color(0xFF334155), fontWeight = FontWeight.Medium)
                 }
             },
@@ -653,7 +813,7 @@ fun BoardScreen(viewModel: BoardViewModel) {
                 }
 
                 if (state.currentUser?.role == Role.SUPER_ADMIN || state.currentUser?.role == Role.ADMIN || state.currentUser?.role == Role.USER) {
-                    val label = if (state.currentUser?.role == Role.USER) "My Communities" else "Communities"
+                    val label = if (state.currentUser.role == Role.USER) "My Communities" else "Communities"
                     navItems.add(Triple(label, Icons.Default.Groups, Screen.COMMUNITIES))
                 }
 
@@ -681,7 +841,24 @@ fun BoardScreen(viewModel: BoardViewModel) {
                         label = { Text(label, fontWeight = FontWeight.Bold, fontSize = 14.sp) },
                         selected = state.currentScreen == screen,
                         onClick = { viewModel.onEvent(BoardEvent.NavigateTo(screen)); scope.launch { drawerState.close() } },
-                        icon = { Icon(icon, null, modifier = Modifier.size(20.dp)) },
+                        icon = { 
+                            if (screen == Screen.REQUESTS && pendingCount > 0) {
+                                BadgedBox(
+                                    badge = {
+                                        Badge(
+                                            containerColor = Color(0xFFEF4444),
+                                            contentColor = Color.White
+                                        ) {
+                                            Text(pendingCount.toString())
+                                        }
+                                    }
+                                ) {
+                                    Icon(icon, null, modifier = Modifier.size(20.dp))
+                                }
+                            } else {
+                                Icon(icon, null, modifier = Modifier.size(20.dp))
+                            }
+                        },
                         modifier = Modifier.padding(horizontal = 12.dp, vertical = 0.dp),
                         colors = NavigationDrawerItemDefaults.colors(
                             selectedContainerColor = Color(0xFFE3F2FD),
@@ -791,7 +968,10 @@ fun BoardScreen(viewModel: BoardViewModel) {
                 val canManageUsers = canManageAdmins || hasCommunityManagePerm
                 val canManageRequests = currentUser?.role == Role.SUPER_ADMIN || 
                                        currentUser?.safePermissions()?.contains("can_manage_requests_globally") == true ||
-                                       currentUser?.safePermissions()?.contains("can_approve_posts_globally") == true
+                                       currentUser?.safePermissions()?.contains("can_approve_posts_globally") == true ||
+                                       (currentUser?.role == Role.ADMIN && currentUser.safeManaged().isNotEmpty() && 
+                                        (currentUser.safePermissions().contains("can_approve_community_posts") || 
+                                         currentUser.safePermissions().contains("can_manage_community_requests")))
                 
                 val showBottomBar = canManageUsers || canManageRequests
 
@@ -831,7 +1011,24 @@ fun BoardScreen(viewModel: BoardViewModel) {
                                         overflow = TextOverflow.Ellipsis
                                     ) 
                                 },
-                                icon = { Icon(icon, contentDescription = label, modifier = Modifier.size(24.dp)) },
+                                icon = { 
+                                    if (screen == Screen.REQUESTS && pendingCount > 0) {
+                                        BadgedBox(
+                                            badge = {
+                                                Badge(
+                                                    containerColor = Color(0xFFEF4444),
+                                                    contentColor = Color.White
+                                                ) {
+                                                    Text(pendingCount.toString())
+                                                }
+                                            }
+                                        ) {
+                                            Icon(icon, contentDescription = label, modifier = Modifier.size(24.dp))
+                                        }
+                                    } else {
+                                        Icon(icon, contentDescription = label, modifier = Modifier.size(24.dp))
+                                    }
+                                },
                                 alwaysShowLabel = true,
                                 colors = NavigationBarItemDefaults.colors(
                                     selectedIconColor = Color(0xFF0D47A1),
@@ -855,8 +1052,8 @@ fun BoardScreen(viewModel: BoardViewModel) {
                             Screen.CREATE -> CreatePostContent(viewModel)
                             Screen.COMMUNITIES -> CommunitiesContent(viewModel)
                             Screen.COMMUNITY_MEMBERS -> CommunityMembersContent(viewModel)
-                            Screen.JOIN_COMMUNITY -> JoinCommunityContent(viewModel, context)
-                            Screen.REQUESTS -> RequestsContent(viewModel, context)
+                            Screen.JOIN_COMMUNITY -> JoinCommunityContent(viewModel)
+                            Screen.REQUESTS -> RequestsContent(viewModel)
                             Screen.USERS -> UsersManagementContent(viewModel, isAdminManagement = false) { helpKey -> helpTextToShow = permissionDescriptions[helpKey] }
                             Screen.ADMINS -> UsersManagementContent(viewModel, isAdminManagement = true) { helpKey -> helpTextToShow = permissionDescriptions[helpKey] }
                         }
@@ -885,23 +1082,23 @@ fun UsersManagementContent(viewModel: BoardViewModel, isAdminManagement: Boolean
     val state = viewModel.state.value
     var searchQuery by remember { mutableStateOf("") }
     
-    val filteredUsers = state.users.filter { 
-        val matchesSearch = it.username.contains(searchQuery, ignoreCase = true) || 
+    val filteredUsers = state.users.filter {
+        val matchesSearch = it.username.contains(searchQuery, ignoreCase = true) ||
                           it.email.contains(searchQuery, ignoreCase = true)
-        
+
         val isSelf = it.id == state.currentUser?.id
         val matchesRole = if (isAdminManagement) it.role == Role.ADMIN else it.role == Role.USER
-        
+
         // Super Admin sees everyone
         // Admin sees users who are in communities they manage
         val hasGlobalManagement = state.currentUser?.role == Role.SUPER_ADMIN ||
                                  state.currentUser?.safePermissions()?.contains("can_manage_roles") == true ||
                                  state.currentUser?.safePermissions()?.contains("can_manage_permissions") == true
-        
+
         val isVisible = if (hasGlobalManagement) {
             true
         } else if (state.currentUser?.role == Role.ADMIN || state.currentUser?.safePermissions()?.contains("can_manage_community_users") == true) {
-            val managedComms = state.currentUser?.safeManaged() ?: emptyList()
+            val managedComms = state.currentUser.safeManaged()
             val isInMyCommunity = it.safeJoined().any { joined -> managedComms.contains(joined) }
             val managesMyCommunity = it.safeManaged().any { managed -> managedComms.contains(managed) }
             
@@ -934,7 +1131,6 @@ fun UsersManagementContent(viewModel: BoardViewModel, isAdminManagement: Boolean
             )
         )
 
-
         LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             items(filteredUsers) { user ->
                 val currentUser = state.currentUser
@@ -956,7 +1152,6 @@ fun UsersManagementContent(viewModel: BoardViewModel, isAdminManagement: Boolean
                     canManageRoles = canManageRoles,
                     canManagePermissions = canManagePermissions,
                     canManageBypass = canManageBypass,
-                    isAdminManagementView = isAdminManagement,
                     onUpdateRole = { targetRole ->
                         viewModel.onEvent(BoardEvent.RequestUpdateRole(user.id, targetRole))
                     },
@@ -970,16 +1165,14 @@ fun UsersManagementContent(viewModel: BoardViewModel, isAdminManagement: Boolean
 
 @Composable
 fun UserCard(
-    user: com.example.campusboard.domain.model.User, 
-    viewModel: BoardViewModel, 
+    user: User, 
+    viewModel: BoardViewModel,
     canManageRoles: Boolean,
     canManagePermissions: Boolean, 
     canManageBypass: Boolean,
-    isAdminManagementView: Boolean,
     onUpdateRole: (Role) -> Unit,
     onShowHelp: (String) -> Unit
 ) {
-    val state = viewModel.state.value
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = Color.White),
@@ -1182,12 +1375,9 @@ fun UserCard(
 fun CommunitiesContent(viewModel: BoardViewModel) {
     val state = viewModel.state.value
     var showCreateDialog by remember { mutableStateOf(false) }
-    var newCommunityName by remember { mutableStateOf("") }
-    var newCommunityDesc by remember { mutableStateOf("") }
-
     val filteredCommunities = if (state.currentUser?.role == Role.ADMIN || state.currentUser?.role == Role.USER) {
-        state.communities.filter { 
-            it.name == "General" || 
+        state.communities.filter {
+            it.name == "General" ||
             state.currentUser.safeManaged().contains(it.name) ||
             state.currentUser.safeJoined().contains(it.name)
         }
@@ -1279,8 +1469,8 @@ fun CommunityEditorDialog(
             }
         },
         confirmButton = {
-            Button(onClick = { onConfirm(name, desc); onDismiss() }) { 
-                Text(if (community == null) "Create" else "Save") 
+            Button(onClick = { onConfirm(name, desc); onDismiss() }) {
+                Text(if (community == null) "Create" else "Save")
             }
         },
         dismissButton = {
@@ -1324,7 +1514,7 @@ fun CommunityCard(
                 }
                 
                 // Edit Button
-                val canEdit = viewModel.state.value.currentUser?.role == Role.SUPER_ADMIN || 
+                val canEdit = viewModel.state.value.currentUser?.role == Role.SUPER_ADMIN ||
                              viewModel.state.value.currentUser?.safePermissions()?.contains("can_edit_any_community") == true
                 
                 if (canEdit) {
@@ -1408,7 +1598,7 @@ fun CommunityMembersContent(viewModel: BoardViewModel) {
 
 
 @Composable
-fun JoinCommunityContent(viewModel: BoardViewModel, context: Context) {
+fun JoinCommunityContent(viewModel: BoardViewModel) {
     val state = viewModel.state.value
     val availableToJoin = state.communities.filter { it.name != "General" && !state.currentUser?.safeJoined()?.contains(it.name)!! }
 
@@ -1426,57 +1616,12 @@ fun JoinCommunityContent(viewModel: BoardViewModel, context: Context) {
                 }
             }
         }
-
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            items(availableToJoin) { community ->
-                val pendingRequest = state.myJoinRequests.find { it.community == community.name && it.status == "PENDING" }
-                
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = Color.White),
-                    shape = RoundedCornerShape(16.dp),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Text(community.name, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
-                        Text(community.description, style = MaterialTheme.typography.bodySmall, color = Color(0xFF334155))
-                        Spacer(Modifier.height(12.dp))
-                        
-                        if (pendingRequest != null) {
-                            Button(
-                                onClick = { viewModel.onEvent(BoardEvent.CancelJoinRequest(pendingRequest.id)) },
-                                modifier = Modifier.fillMaxWidth(),
-                                shape = RoundedCornerShape(8.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444))
-                            ) {
-                                Text("Cancel Request")
-                            }
-                        } else {
-                            Button(
-                                onClick = { viewModel.onEvent(BoardEvent.SubmitJoinRequest(community.name)) },
-                                modifier = Modifier.fillMaxWidth(),
-                                shape = RoundedCornerShape(8.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0D47A1))
-                            ) {
-                                Text("Request to Join")
-                            }
-                            Text(
-                                "Requesting will auto-leave your current community.",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = Color(0xFF64748B),
-                                modifier = Modifier.padding(top = 4.dp)
-                            )
-                        }
-                    }
-                }
-            }
-        }
     }
 }
 
 
 @Composable
-fun RequestsContent(viewModel: BoardViewModel, context: Context) {
+fun RequestsContent(viewModel: BoardViewModel) {
     var selectedTab by remember { mutableIntStateOf(0) }
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
@@ -1522,14 +1667,15 @@ fun RequestsContent(viewModel: BoardViewModel, context: Context) {
     }
 }
 
-
 @Composable
 fun JoinRequestsList(viewModel: BoardViewModel) {
     val state = viewModel.state.value
+    var searchQuery by remember { mutableStateOf("") }
+
     val canManageGlobally = state.currentUser?.role == Role.SUPER_ADMIN || 
                            state.currentUser?.safePermissions()?.contains("can_manage_requests_globally") == true
     
-    val filteredRequests = if (canManageGlobally) {
+    val baseFilteredRequests = if (canManageGlobally) {
         state.joinRequests
     } else if (state.currentUser?.role == Role.ADMIN) {
         state.joinRequests.filter { state.currentUser.safeManaged().contains(it.community) }
@@ -1537,66 +1683,89 @@ fun JoinRequestsList(viewModel: BoardViewModel) {
         emptyList()
     }
 
-    if (filteredRequests.isEmpty() && !state.isLoading) {
-        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Icon(Icons.Default.Inbox, null, modifier = Modifier.size(64.dp), tint = Color(0xFFCBD5E1))
-                Spacer(Modifier.height(16.dp))
-                Text("No pending requests", style = MaterialTheme.typography.titleMedium, color = Color(0xFF334155))
-            }
-        }
+    val filteredRequests = baseFilteredRequests.filter {
+        it.username.contains(searchQuery, ignoreCase = true) ||
+        it.userEmail.contains(searchQuery, ignoreCase = true) ||
+        it.community.contains(searchQuery, ignoreCase = true)
     }
 
-    LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        items(filteredRequests) { request ->
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = Color.White),
-                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
-                shape = RoundedCornerShape(16.dp)
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            modifier = Modifier
-                                .size(40.dp)
-                                .clip(CircleShape)
-                                .background(Color(0xFFF1F5F9)),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(Icons.Default.Person, null, tint = Color(0xFF475569))
-                        }
-                        Spacer(Modifier.width(12.dp))
-                        Column {
-                            Text(request.username, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
-                            Text(request.userEmail, style = MaterialTheme.typography.bodySmall, color = Color(0xFF334155))
-                        }
-                        Spacer(Modifier.weight(1f))
-                        Surface(color = Color(0xFFE0F2FE), shape = RoundedCornerShape(8.dp)) {
-                            Text(request.community, modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp), style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Black, color = Color(0xFF0D47A1))
-                        }
-                    }
-                    Spacer(Modifier.height(12.dp))
-                    Text(
-                        text = "This user wants to join the ${request.community} community.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = Color(0xFF475569)
-                    )
+    Column {
+        OutlinedTextField(
+            value = searchQuery,
+            onValueChange = { searchQuery = it },
+            placeholder = { Text("Search requests...") },
+            modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
+            leadingIcon = { Icon(Icons.Default.Search, null) },
+            shape = RoundedCornerShape(12.dp),
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedBorderColor = Color(0xFF0D47A1),
+                unfocusedBorderColor = Color(0xFFE2E8F0)
+            )
+        )
+
+        if (filteredRequests.isEmpty() && !state.isLoading) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(Icons.Default.Inbox, null, modifier = Modifier.size(64.dp), tint = Color(0xFFCBD5E1))
                     Spacer(Modifier.height(16.dp))
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        OutlinedButton(
-                            onClick = { viewModel.onEvent(BoardEvent.RejectJoinRequest(request.id)) },
-                            modifier = Modifier.weight(1f),
-                            shape = RoundedCornerShape(12.dp),
-                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFEF4444)),
-                            border = BorderStroke(1.dp, Color(0xFFFEE2E2))
-                        ) { Text("Reject", fontWeight = FontWeight.Bold) }
-                        Button(
-                            onClick = { viewModel.onEvent(BoardEvent.AcceptJoinRequest(request.id, request.userId, request.community)) },
-                            modifier = Modifier.weight(1f),
-                            shape = RoundedCornerShape(12.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981))
-                        ) { Text("Accept", fontWeight = FontWeight.Bold) }
+                    Text("No pending requests", style = MaterialTheme.typography.titleMedium, color = Color(0xFF334155))
+                }
+            }
+        }
+
+        LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            items(filteredRequests) { request ->
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = Color.White),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+                    shape = RoundedCornerShape(16.dp)
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .clip(CircleShape)
+                                    .background(Color(0xFFF1F5F9)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(Icons.Default.Person, null, tint = Color(0xFF475569))
+                            }
+                            Spacer(Modifier.width(12.dp))
+                            Column {
+                                Text(request.username, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                                Text(request.userEmail, style = MaterialTheme.typography.bodySmall, color = Color(0xFF334155))
+                            }
+                            Spacer(Modifier.weight(1f))
+                            Surface(color = Color(0xFFE0F2FE), shape = RoundedCornerShape(8.dp)) {
+                                Text(request.community, modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp), style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Black, color = Color(0xFF0D47A1))
+                            }
+                        }
+                        Spacer(Modifier.height(12.dp))
+                        Text(
+                            text = "This user wants to join the ${request.community} community.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = Color(0xFF475569)
+                        )
+                        Spacer(Modifier.height(16.dp))
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            OutlinedButton(
+                                onClick = { viewModel.onEvent(BoardEvent.RequestRejectJoinRequest(request)) },
+                                modifier = Modifier.weight(1f),
+                                enabled = !state.isLoading,
+                                shape = RoundedCornerShape(12.dp),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFEF4444)),
+                                border = BorderStroke(1.dp, Color(0xFFFEE2E2))
+                            ) { Text("Reject", fontWeight = FontWeight.Bold) }
+                            Button(
+                                onClick = { viewModel.onEvent(BoardEvent.RequestAcceptJoinRequest(request)) },
+                                modifier = Modifier.weight(1f),
+                                enabled = !state.isLoading,
+                                shape = RoundedCornerShape(12.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981))
+                            ) { Text("Accept", fontWeight = FontWeight.Bold) }
+                        }
                     }
                 }
             }
@@ -1605,13 +1774,17 @@ fun JoinRequestsList(viewModel: BoardViewModel) {
 }
 
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PostApprovalsList(viewModel: BoardViewModel) {
     val state = viewModel.state.value
+    var postToView by remember { mutableStateOf<Post?>(null) }
+    var searchQuery by remember { mutableStateOf("") }
+    
     val canApproveGlobally = state.currentUser?.role == Role.SUPER_ADMIN || 
                             state.currentUser?.safePermissions()?.contains("can_approve_posts_globally") == true
     
-    val filteredPosts = if (canApproveGlobally) {
+    val baseFilteredPosts = if (canApproveGlobally) {
         state.pendingPosts
     } else if (state.currentUser?.role == Role.ADMIN) {
         state.pendingPosts.filter { state.currentUser.safeManaged().contains(it.community) }
@@ -1619,49 +1792,161 @@ fun PostApprovalsList(viewModel: BoardViewModel) {
         emptyList()
     }
 
-    if (filteredPosts.isEmpty() && !state.isLoading) {
-        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Icon(Icons.Default.PostAdd, null, modifier = Modifier.size(64.dp), tint = Color(0xFFCBD5E1))
-                Spacer(Modifier.height(16.dp))
-                Text("No pending post approvals", style = MaterialTheme.typography.titleMedium, color = Color(0xFF334155))
-            }
-        }
+    val filteredPosts = baseFilteredPosts.filter {
+        it.title.contains(searchQuery, ignoreCase = true) ||
+        it.author.contains(searchQuery, ignoreCase = true) ||
+        it.community.contains(searchQuery, ignoreCase = true)
     }
 
-    LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        items(filteredPosts) { post ->
-            Box(modifier = Modifier.padding(8.dp)) {
-                PostCard(post = post, onClick = {}) 
-            }
-            Card(
-                modifier = Modifier.fillMaxWidth().offset(y = (-10).dp),
-                colors = CardDefaults.cardColors(containerColor = Color.White),
-                elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
-                shape = RoundedCornerShape(bottomStart = 16.dp, bottomEnd = 16.dp)
+    Column {
+        OutlinedTextField(
+            value = searchQuery,
+            onValueChange = { searchQuery = it },
+            placeholder = { Text("Search posts...") },
+            modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
+            leadingIcon = { Icon(Icons.Default.Search, null) },
+            shape = RoundedCornerShape(12.dp),
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedBorderColor = Color(0xFF0D47A1),
+                unfocusedBorderColor = Color(0xFFE2E8F0)
+            )
+        )
+
+        if (postToView != null) {
+            BasicAlertDialog(
+                onDismissRequest = { postToView = null },
+                modifier = Modifier.fillMaxWidth().padding(16.dp)
             ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        OutlinedButton(
-                            onClick = { viewModel.onEvent(BoardEvent.RejectPostRequest(post.id)) },
-                            modifier = Modifier.weight(1f),
-                            shape = RoundedCornerShape(12.dp),
-                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFEF4444)),
-                            border = BorderStroke(1.dp, Color(0xFFFEE2E2))
-                        ) { Text("Reject", fontWeight = FontWeight.Bold) }
-                        Button(
-                            onClick = { viewModel.onEvent(BoardEvent.AcceptPostRequest(post.id, post.community)) },
-                            modifier = Modifier.weight(1f),
-                            shape = RoundedCornerShape(12.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981))
-                        ) { Text("Approve", fontWeight = FontWeight.Bold) }
+                Box(contentAlignment = Alignment.Center) {
+                    postToView?.let { post ->
+                        PostCard(
+                            post = post,
+                            isDialog = true,
+                            onClick = { postToView = null }
+                        )
                     }
                 }
             }
-            Spacer(modifier = Modifier.height(16.dp))
+        }
+
+        if (filteredPosts.isEmpty() && !state.isLoading) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(Icons.Default.PostAdd, null, modifier = Modifier.size(64.dp), tint = Color(0xFFCBD5E1))
+                    Spacer(Modifier.height(16.dp))
+                    Text("No pending post approvals", style = MaterialTheme.typography.titleMedium, color = Color(0xFF334155))
+                }
+            }
+        }
+
+        LazyColumn(verticalArrangement = Arrangement.spacedBy(16.dp), contentPadding = PaddingValues(bottom = 24.dp)) {
+            items(filteredPosts) { post ->
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    SimplifiedPostItem(
+                        post = post,
+                        onViewClick = { postToView = post }
+                    )
+                    
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp)
+                            .offset(y = (-8).dp),
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFFF8FAFC)),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+                        shape = RoundedCornerShape(bottomStart = 12.dp, bottomEnd = 12.dp),
+                        border = BorderStroke(1.dp, Color(0xFFE2E8F0))
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(12.dp).fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            OutlinedButton(
+                                onClick = { viewModel.onEvent(BoardEvent.RequestRejectPost(post)) },
+                                modifier = Modifier.weight(1f),
+                                enabled = !state.isLoading,
+                                shape = RoundedCornerShape(10.dp),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFEF4444)),
+                                border = BorderStroke(1.dp, Color(0xFFFEE2E2))
+                            ) { Text("Reject", fontWeight = FontWeight.Bold) }
+                            
+                            Button(
+                                onClick = { viewModel.onEvent(BoardEvent.RequestAcceptPost(post)) },
+                                modifier = Modifier.weight(1f),
+                                enabled = !state.isLoading,
+                                shape = RoundedCornerShape(10.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981))
+                            ) { Text("Approve", fontWeight = FontWeight.Bold) }
+                        }
+                    }
+                }
+            }
         }
     }
 }
+
+@Composable
+fun SimplifiedPostItem(
+    post: Post,
+    onViewClick: () -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        elevation = CardDefaults.cardElevation(defaultElevation = 3.dp),
+        shape = RoundedCornerShape(12.dp),
+        border = BorderStroke(1.dp, Color(0xFFE2E8F0))
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.Top
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = post.title.ifEmpty { "Untitled Post" },
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF1E293B),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = "by ${post.author} • ${post.community}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color(0xFF64748B)
+                    )
+                }
+                
+                IconButton(
+                    onClick = onViewClick,
+                    modifier = Modifier.size(32.dp).offset(x = 8.dp, y = (-8).dp)
+                ) {
+                    Icon(
+                        Icons.Default.Visibility, 
+                        contentDescription = "View Full", 
+                        tint = Color(0xFF3B82F6),
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
+            
+            Spacer(Modifier.height(8.dp))
+            
+            Text(
+                text = post.content,
+                style = MaterialTheme.typography.bodyMedium,
+                color = Color(0xFF475569),
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
+}
+
 
 
 @Composable
@@ -1685,6 +1970,12 @@ fun CreatePostContent(viewModel: BoardViewModel) {
     
     var selectedCommunityTarget by remember { mutableStateOf(state.selectedCommunity) }
     
+    val canBypass = remember(state.currentUser, selectedCommunityTarget) {
+        val user = state.currentUser
+        user?.role == Role.SUPER_ADMIN || 
+        user?.safePermissions()?.contains("bypass_approval_$selectedCommunityTarget") == true
+    }
+    
     // Ensure selected target is valid when selectable list changes
     LaunchedEffect(selectableCommunities) {
         if (selectedCommunityTarget !in selectableCommunities) {
@@ -1704,6 +1995,7 @@ fun CreatePostContent(viewModel: BoardViewModel) {
         Color(0xFFFCE4EC)  // Pink
     )
     var selectedColor by remember { mutableStateOf(colors[0]) }
+    var selectedStyle by remember { mutableIntStateOf(0) }
     val showDatePicker = remember { mutableStateOf(false) }
     val showTimePicker = remember { mutableStateOf(false) }
     var selectedTimestamp by remember { mutableLongStateOf(System.currentTimeMillis()) }
@@ -1753,6 +2045,50 @@ fun CreatePostContent(viewModel: BoardViewModel) {
         modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
+        Spacer(modifier = Modifier.height(8.dp))
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { isPreviewExpanded = !isPreviewExpanded }
+                .padding(vertical = 8.dp),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                "PREVIEW", 
+                style = MaterialTheme.typography.labelSmall, 
+                fontWeight = FontWeight.Black, 
+                color = Color(0xFF334155),
+                letterSpacing = 2.sp
+            )
+            Icon(
+                if (isPreviewExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                contentDescription = null,
+                modifier = Modifier.size(16.dp),
+                tint = Color(0xFF64748B)
+            )
+        }
+        
+        AnimatedVisibility(visible = isPreviewExpanded) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                PostCard(
+                    post = Post(
+                        id = "preview_id",
+                        title = title.ifBlank { "Title Preview" },
+                        content = content.ifBlank { "Your content will appear here..." },
+                        type = selectedType,
+                        color = selectedColor.value.toLong(),
+                        style = selectedStyle,
+                        timestamp = selectedTimestamp,
+                        author = viewModel.state.value.currentUser?.username ?: "You",
+                        community = selectedCommunityTarget
+                    ),
+                    isPreview = true
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+            }
+        }
+
         Column(
             modifier = Modifier
                 .weight(1f)
@@ -1760,48 +2096,6 @@ fun CreatePostContent(viewModel: BoardViewModel) {
                 .padding(bottom = 16.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Spacer(modifier = Modifier.height(8.dp))
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { isPreviewExpanded = !isPreviewExpanded }
-                    .padding(vertical = 8.dp),
-                horizontalArrangement = Arrangement.Center,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    "PREVIEW", 
-                    style = MaterialTheme.typography.labelSmall, 
-                    fontWeight = FontWeight.Black, 
-                    color = Color(0xFF334155),
-                    letterSpacing = 2.sp
-                )
-                Icon(
-                    if (isPreviewExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                    contentDescription = null,
-                    modifier = Modifier.size(16.dp),
-                    tint = Color(0xFF64748B)
-                )
-            }
-            
-            AnimatedVisibility(visible = isPreviewExpanded) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    PostCard(
-                        post = Post(
-                            id = "preview_id",
-                            title = title.ifBlank { "Title Preview" },
-                            content = content.ifBlank { "Your content will appear here..." },
-                            type = selectedType,
-                            color = selectedColor.value.toLong(),
-                            timestamp = selectedTimestamp,
-                            author = viewModel.state.value.currentUser?.username ?: "You",
-                            community = selectedCommunityTarget
-                        ),
-                        isPreview = true
-                    )
-                    Spacer(modifier = Modifier.height(16.dp))
-                }
-            }
             
             Card(
                 modifier = Modifier.fillMaxWidth(),
@@ -1846,7 +2140,7 @@ fun CreatePostContent(viewModel: BoardViewModel) {
                     ) {
                         selectableCommunities.forEach { community ->
                             DropdownMenuItem(
-                                text = { Text(community, fontWeight = FontWeight.Medium) },
+                                text = { Text(community, fontWeight = FontWeight.Medium, color = Color(0xFF1E293B)) },
                                 onClick = {
                                     selectedCommunityTarget = community
                                     showCommunityDropdown = false
@@ -1855,7 +2149,8 @@ fun CreatePostContent(viewModel: BoardViewModel) {
                                     Icon(
                                         if (community == "General") Icons.Default.Public else Icons.Default.Groups,
                                         null,
-                                        modifier = Modifier.size(18.dp)
+                                        modifier = Modifier.size(18.dp),
+                                        tint = Color(0xFF475569)
                                     )
                                 }
                             )
@@ -1933,7 +2228,27 @@ fun CreatePostContent(viewModel: BoardViewModel) {
 
                 Spacer(modifier = Modifier.height(12.dp))
                 
-                Text("SELECT COLOR", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Black, color = Color(0xFF334155))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("SELECT COLOR", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Black, color = Color(0xFF334155))
+                    IconButton(
+                        onClick = { 
+                            selectedColor = colors.random()
+                            selectedStyle = (0..3).random()
+                        },
+                        modifier = Modifier.size(24.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.Shuffle, 
+                            contentDescription = "Randomize", 
+                            modifier = Modifier.size(18.dp), 
+                            tint = Color(0xFF0D47A1)
+                        )
+                    }
+                }
                 Row(modifier = Modifier.horizontalScroll(rememberScrollState()).padding(vertical = 12.dp)) {
                     colors.forEach { color ->
                         Box(
@@ -1954,6 +2269,35 @@ fun CreatePostContent(viewModel: BoardViewModel) {
                                 Icon(Icons.Default.Check, null, tint = Color(0xFF0D47A1), modifier = Modifier.size(20.dp))
                             }
                         }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                Text("SELECT STYLE", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Black, color = Color(0xFF334155))
+                Row(modifier = Modifier.horizontalScroll(rememberScrollState()).padding(vertical = 12.dp)) {
+                    val styles = listOf(
+                        "Pin" to Icons.Default.PushPin,
+                        "Tape" to Icons.Default.TurnedInNot, 
+                        "Spiral" to Icons.AutoMirrored.Filled.List,
+                        "Clip" to Icons.Default.Bookmark,
+                        "Staple" to Icons.Default.HorizontalRule,
+                        "Magnet" to Icons.Default.Brightness1,
+                        "Washi" to Icons.Default.ViewArray
+                    )
+                    styles.forEachIndexed { index, (name, icon) ->
+                        FilterChip(
+                            selected = selectedStyle == index,
+                            onClick = { selectedStyle = index },
+                            label = { Text(name, fontWeight = FontWeight.Bold) },
+                            modifier = Modifier.padding(end = 8.dp),
+                            leadingIcon = { Icon(icon, null, modifier = Modifier.size(16.dp)) },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = Color(0xFFE3F2FD),
+                                selectedLabelColor = Color(0xFF0D47A1),
+                                selectedLeadingIconColor = Color(0xFF0D47A1)
+                            )
+                        )
                     }
                 }
 
@@ -1985,40 +2329,67 @@ fun CreatePostContent(viewModel: BoardViewModel) {
                     }
                 }
 
-                Spacer(modifier = Modifier.height(12.dp))
+                if (canBypass) {
+                    Spacer(modifier = Modifier.height(12.dp))
 
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedCard(
-                        onClick = { showDatePicker.value = true },
-                        modifier = Modifier.weight(1f),
-                        shape = RoundedCornerShape(12.dp),
-                        colors = CardDefaults.outlinedCardColors(containerColor = Color(0xFFF8FAFC)),
-                        border = BorderStroke(1.dp, Color(0xFFE2E8F0))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Column(modifier = Modifier.padding(12.dp)) {
-                            Text("DATE", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = Color(0xFF334155))
-                            val sdf = remember { SimpleDateFormat("MMM dd, yyyy", Locale.getDefault()) }
-                            Text(sdf.format(Date(selectedTimestamp)), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold, color = Color(0xFF1E293B))
+                        OutlinedCard(
+                            onClick = { showDatePicker.value = true },
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = CardDefaults.outlinedCardColors(containerColor = Color(0xFFF8FAFC)),
+                            border = BorderStroke(1.dp, Color(0xFFE2E8F0))
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Text(
+                                    "DATE",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF334155)
+                                )
+                                val sdf =
+                                    remember { SimpleDateFormat("MMM dd, yyyy", Locale.getDefault()) }
+                                Text(
+                                    sdf.format(Date(selectedTimestamp)),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF1E293B)
+                                )
+                            }
                         }
-                    }
-                    OutlinedCard(
-                        onClick = { showTimePicker.value = true },
-                        modifier = Modifier.weight(1f),
-                        shape = RoundedCornerShape(12.dp),
-                        colors = CardDefaults.outlinedCardColors(containerColor = Color(0xFFF8FAFC)),
-                        border = BorderStroke(1.dp, Color(0xFFE2E8F0))
-                    ) {
-                        Column(modifier = Modifier.padding(12.dp)) {
-                            Text("TIME", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = Color(0xFF334155))
-                            val sdf = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
-                            Text(sdf.format(Date(selectedTimestamp)), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold, color = Color(0xFF1E293B))
+                        OutlinedCard(
+                            onClick = { showTimePicker.value = true },
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = CardDefaults.outlinedCardColors(containerColor = Color(0xFFF8FAFC)),
+                            border = BorderStroke(1.dp, Color(0xFFE2E8F0))
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Text(
+                                    "TIME",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF334155)
+                                )
+                                val sdf = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
+                                Text(
+                                    sdf.format(Date(selectedTimestamp)),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF1E293B)
+                                )
+                            }
                         }
                     }
                 }
             }
         }
+    }
 
-        Spacer(modifier = Modifier.height(32.dp))
+    Spacer(modifier = Modifier.height(32.dp))
         
         Button(
             onClick = { 
@@ -2035,6 +2406,7 @@ fun CreatePostContent(viewModel: BoardViewModel) {
                         content = content, 
                         type = selectedType, 
                         color = selectedColor.value.toLong(), 
+                        style = selectedStyle,
                         timestamp = selectedTimestamp,
                         community = selectedCommunityTarget,
                         isBroadcast = isBroadcast
@@ -2050,8 +2422,6 @@ fun CreatePostContent(viewModel: BoardViewModel) {
     }
 }
 
-}
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun BoardContent(viewModel: BoardViewModel) {
@@ -2065,18 +2435,18 @@ fun BoardContent(viewModel: BoardViewModel) {
                 it.content.contains(searchQuery, ignoreCase = true) ||
                 it.author.contains(searchQuery, ignoreCase = true) ||
                 it.type.name.contains(searchQuery, ignoreCase = true)
-        
+
         val matchesType = selectedType == null || it.type == selectedType
-        
+
         matchesSearch && matchesType
     }
 
     if (selectedPostForDialog != null) {
         val post = selectedPostForDialog!!
-        val canDelete = state.currentUser?.role == Role.SUPER_ADMIN || 
+        val canDelete = state.currentUser?.role == Role.SUPER_ADMIN ||
                        state.currentUser?.safePermissions()?.contains("can_delete_any_post") == true ||
-                       (state.currentUser?.role == Role.ADMIN && 
-                        state.currentUser.safeManaged().contains(post.community) && 
+                       (state.currentUser?.role == Role.ADMIN &&
+                        state.currentUser.safeManaged().contains(post.community) &&
                         state.currentUser.safePermissions().contains("can_delete_community_posts"))
         
         BasicAlertDialog(
@@ -2220,10 +2590,10 @@ fun BoardContent(viewModel: BoardViewModel) {
                 verticalItemSpacing = 8.dp
             ) {
                 items(filteredPosts) { post ->
-                    val canDelete = state.currentUser?.role == Role.SUPER_ADMIN || 
+                    val canDelete = state.currentUser?.role == Role.SUPER_ADMIN ||
                                    state.currentUser?.safePermissions()?.contains("can_delete_any_post") == true ||
-                                   (state.currentUser?.role == Role.ADMIN && 
-                                    state.currentUser.safeManaged().contains(post.community) && 
+                                   (state.currentUser?.role == Role.ADMIN &&
+                                    state.currentUser.safeManaged().contains(post.community) &&
                                     state.currentUser.safePermissions().contains("can_delete_community_posts"))
                     PostCard(
                         post = post, 
@@ -2247,11 +2617,9 @@ fun PostCard(
 ) {
     val seed = post.id.hashCode().toLong()
     val rotation = remember(seed, isDialog, isPreview) { if (!isDialog && !isPreview) (Random(seed).nextFloat() * 12f) - 6f else 0f }
-    val tiltX = remember(seed, isDialog, isPreview) { if (!isDialog && !isPreview) (Random(seed + 1).nextFloat() * 4f) - 2f else 0f }
-    val tiltY = remember(seed, isDialog, isPreview) { if (!isDialog && !isPreview) (Random(seed + 2).nextFloat() * 4f) - 2f else 0f }
     
     val pinRotation = remember(seed) { (Random(seed + 3).nextFloat() * 40f) - 20f }
-    val noteStyle = remember(seed, isPreview) { if (isPreview) 0 else Random(seed + 4).nextInt(4) }
+    val noteStyle = post.style
     val heightOffset = remember(seed, isPreview) { if (isPreview) 0.dp else (Random(seed + 5).nextFloat() * 120f - 40f).dp }
     val widthVariation = remember(seed, isPreview) { if (isPreview) 0.dp else (Random(seed + 6).nextFloat() * 16f - 8f).dp }
     val contentPaddingVariation = remember(seed, isPreview) { if (isPreview) 0.dp else (Random(seed + 7).nextFloat() * 12f).dp }
@@ -2305,10 +2673,7 @@ fun PostCard(
         }
     }
 
-    val shape = noteShape
-
     val contentColor = if (baseColor.isLight()) Color.Black else Color.White
-    val secondaryContentColor = contentColor
     
     val cardModifier = Modifier
         .then(if (isDialog) Modifier.fillMaxWidth() else Modifier.width(intrinsicSize = IntrinsicSize.Max))
@@ -2330,7 +2695,7 @@ fun PostCard(
         .then(
             Modifier.shadow(
                 elevation = if (isDialog) 6.dp else 16.dp,
-                shape = shape,
+                shape = noteShape,
                 ambientColor = Color.Black.copy(alpha = 0.5f),
                 spotColor = Color.Black.copy(alpha = 0.6f)
             )
@@ -2348,10 +2713,10 @@ fun PostCard(
                         )
                     )
                 ),
-                shape
+                noteShape
             )
         )
-        .border(0.5.dp, Color.Black.copy(alpha = 0.12f), shape)
+        .border(0.5.dp, Color.Black.copy(alpha = 0.12f), noteShape)
         .clickable { 
             if (onClick != null) onClick() else isExpanded = !isExpanded
         }
@@ -2403,7 +2768,7 @@ fun PostCard(
                 }
 
                 // Grid or lines
-                if (noteStyle == 1 || noteStyle == 3) {
+                if (noteStyle == 1 || noteStyle == 3 || noteStyle == 5) {
                     var x = lineSpacing
                     while (x < size.width) {
                         drawLine(lineColor, Offset(x, 0f), Offset(x, size.height), strokeWidth)
@@ -2417,7 +2782,7 @@ fun PostCard(
                     y += lineSpacing
                 }
 
-                if (noteStyle == 0 || noteStyle == 2) {
+                if (noteStyle == 0 || noteStyle == 2 || noteStyle == 6) {
                     val marginX = (if (isDialog) 44.dp else 34.dp).toPx()
                     drawLine(Color(0xFFEF4444).copy(alpha = 0.35f), Offset(marginX, 0f), Offset(marginX, size.height), 1.8.dp.toPx())
                 }
@@ -2497,7 +2862,7 @@ fun PostCard(
                 Row(
                     modifier = Modifier
                         .align(Alignment.TopCenter)
-                        .offset(y = (-10.dp))
+                        .offset(y = (-10).dp)
                         .fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceEvenly
                 ) {
@@ -2531,10 +2896,55 @@ fun PostCard(
                         .border(0.5.dp, Color.Black.copy(0.1f), RoundedCornerShape(bottomStart = 6.dp, bottomEnd = 6.dp))
                 )
             }
+            4 -> { // Staple
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .offset(y = 4.dp)
+                        .size(width = 30.dp, height = 4.dp)
+                        .background(Color(0xFF94A3B8), RoundedCornerShape(1.dp))
+                        .border(0.5.dp, Color.Black.copy(0.3f), RoundedCornerShape(1.dp))
+                )
+            }
+            5 -> { // Magnet
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .offset(y = (-12).dp)
+                        .size(24.dp)
+                        .background(Color(0xFF334155), CircleShape)
+                        .border(2.dp, Color.White.copy(0.2f), CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Box(modifier = Modifier.size(8.dp).background(Color.White.copy(0.1f), CircleShape))
+                }
+            }
+            6 -> { // Washi Tape (Double)
+                Box(modifier = Modifier.fillMaxSize()) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopStart)
+                            .offset(x = (-8).dp, y = (-4).dp)
+                            .rotate(-30f)
+                            .size(width = 40.dp, height = 16.dp)
+                            .background(Color(0xFF818CF8).copy(alpha = 0.5f))
+                            .border(0.5.dp, Color.Black.copy(0.1f))
+                    )
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .offset(x = 8.dp, y = (-4).dp)
+                            .rotate(30f)
+                            .size(width = 40.dp, height = 16.dp)
+                            .background(Color(0xFF818CF8).copy(alpha = 0.5f))
+                            .border(0.5.dp, Color.Black.copy(0.1f))
+                    )
+                }
+            }
         }
 
         val leftMarginPadding = when (noteStyle) {
-            0, 2 -> if (isDialog) 36.dp else 28.dp
+            0, 2, 6 -> if (isDialog) 36.dp else 28.dp
             1 -> if (isDialog) 44.dp else 36.dp
             else -> 0.dp
         }
@@ -2586,7 +2996,7 @@ fun PostCard(
                     post.type.name.lowercase().replaceFirstChar { it.uppercase() }, 
                     style = MaterialTheme.typography.labelSmall.copy(fontSize = if (isDialog) 12.sp else 10.sp), 
                     fontWeight = FontWeight.Black, 
-                    color = secondaryContentColor,
+                    color = contentColor,
                     letterSpacing = 0.5.sp
                 )
                 
@@ -2630,12 +3040,12 @@ fun PostCard(
                 Spacer(modifier = Modifier.height(if (isDialog) 14.dp else 8.dp))
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.Person, null, modifier = Modifier.size(if (isDialog) 16.dp else 12.dp), tint = secondaryContentColor)
+                    Icon(Icons.Default.Person, null, modifier = Modifier.size(if (isDialog) 16.dp else 12.dp), tint = contentColor)
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(post.author, style = if (isDialog) MaterialTheme.typography.labelMedium else MaterialTheme.typography.labelSmall, color = contentColor.copy(alpha = 0.85f), fontWeight = FontWeight.Bold)
                     Spacer(modifier = Modifier.weight(1f))
                     val sdf = remember { SimpleDateFormat("MMM dd, HH:mm", Locale.getDefault()) }
-                    Text(sdf.format(Date(post.timestamp)), style = if (isDialog) MaterialTheme.typography.labelMedium else MaterialTheme.typography.labelSmall, color = secondaryContentColor)
+                    Text(sdf.format(Date(post.timestamp)), style = if (isDialog) MaterialTheme.typography.labelMedium else MaterialTheme.typography.labelSmall, color = contentColor)
                 }
             }
         }

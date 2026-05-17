@@ -20,8 +20,10 @@ data class Post(
     var community: String = "",
     var type: PostType = PostType.NOTES,
     var status: PostStatus = PostStatus.APPROVED,
+    var rejectionReason: String? = null,
     var timestamp: Long = System.currentTimeMillis(),
     var color: Long = 0xFFFFFFFFL,
+    var style: Int = 0,
     var isBroadcast: Boolean = false
 ) {
     init {

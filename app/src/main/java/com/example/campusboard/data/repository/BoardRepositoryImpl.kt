@@ -24,7 +24,7 @@ class BoardRepositoryImpl : BoardRepository {
     private val communitiesCollection = firestore.collection("communities")
 
     override fun getPosts(community: String): Flow<List<Post>> = callbackFlow {
-        // Fetch all approved posts and filter in memory to support global broadcasts 
+        // Fetch all approved posts and filter in memory to support global broadcasts
         // across all community boards without complex Firestore composite indexes.
         val query = postsCollection.whereEqualTo("status", PostStatus.APPROVED.name)
 
@@ -88,9 +88,11 @@ class BoardRepositoryImpl : BoardRepository {
         awaitClose { subscription.remove() }
     }
 
-    override suspend fun updatePostStatus(postId: String, status: com.example.campusboard.domain.model.PostStatus): Resource<Unit> {
+    override suspend fun updatePostStatus(postId: String, status: com.example.campusboard.domain.model.PostStatus, reason: String?): Resource<Unit> {
         return try {
-            postsCollection.document(postId).update("status", status.name).await()
+            val updates = mutableMapOf<String, Any>("status" to status.name)
+            reason?.let { updates["rejectionReason"] = it }
+            postsCollection.document(postId).update(updates).await()
             Resource.Success(Unit)
         } catch (e: Exception) {
             Resource.Error(e.message ?: "Could not update post status")
@@ -201,9 +203,11 @@ class BoardRepositoryImpl : BoardRepository {
         awaitClose { subscription.remove() }
     }
 
-    override suspend fun updateJoinRequestStatus(requestId: String, status: String): Resource<Unit> {
+    override suspend fun updateJoinRequestStatus(requestId: String, status: String, reason: String?): Resource<Unit> {
         return try {
-            joinRequestsCollection.document(requestId).update("status", status).await()
+            val updates = mutableMapOf<String, Any>("status" to status)
+            reason?.let { updates["rejectionReason"] = it }
+            joinRequestsCollection.document(requestId).update(updates).await()
             Resource.Success(Unit)
         } catch (e: Exception) {
             Resource.Error(e.message ?: "Could not update request")

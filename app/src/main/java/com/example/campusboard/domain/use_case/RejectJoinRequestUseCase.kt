@@ -12,14 +12,17 @@ class RejectJoinRequestUseCase(
     suspend operator fun invoke(
         currentUser: User?,
         requestId: String,
-        allRequests: List<JoinRequest>
+        allRequests: List<JoinRequest>,
+        reason: String? = null
     ): Resource<Unit> {
         val request = allRequests.find { it.id == requestId }
+            ?: return Resource.Error("Join request not found.")
+
         val canManage = when {
             currentUser?.role == Role.SUPER_ADMIN -> true
             currentUser?.safePermissions()?.contains("can_manage_requests_globally") == true -> true
             currentUser?.role == Role.ADMIN && 
-                    currentUser.safeManaged().contains(request?.community) && 
+                    currentUser.safeManaged().contains(request.community) &&
                     currentUser.safePermissions().contains("can_manage_community_requests") -> true
             else -> false
         }
@@ -28,7 +31,7 @@ class RejectJoinRequestUseCase(
             return Resource.Error("You don't have permission to manage requests for this community.")
         }
 
-        return when (val result = boardRepository.updateJoinRequestStatus(requestId, "REJECTED")) {
+        return when (val result = boardRepository.updateJoinRequestStatus(requestId, "REJECTED", reason)) {
             is Resource.Success -> Resource.Success(Unit)
             is Resource.Error -> Resource.Error(result.message ?: "Failed to reject request")
             else -> Resource.Error("Unknown error")

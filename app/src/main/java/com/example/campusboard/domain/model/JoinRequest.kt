@@ -7,7 +7,8 @@ data class JoinRequest(
     val username: String = "",
     val community: String = "",
     val status: String = "PENDING", // PENDING, ACCEPTED, REJECTED
+    val rejectionReason: String? = null,
     val timestamp: Long = System.currentTimeMillis()
 ) {
-    constructor() : this("", "", "", "", "", "PENDING", System.currentTimeMillis())
+    constructor() : this("", "", "", "", "", "PENDING", null, System.currentTimeMillis())
 }

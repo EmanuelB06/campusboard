@@ -58,7 +58,7 @@ class BoardViewModel(
         getPosts(state.value.selectedCommunity)
         checkIfPasswordRequired()
         setupPostNotifications()
-        
+
         // Always subscribe to general topic (lowercase)
         FirebaseMessaging.getInstance().subscribeToTopic("all_users")
         FirebaseMessaging.getInstance().subscribeToTopic("general")
@@ -69,7 +69,7 @@ class BoardViewModel(
         boardRepository.getAllApprovedPosts()
             .onEach { posts ->
                 val currentUser = state.value.currentUser ?: return@onEach
-                
+
                 // On first load, we remember existing posts so we only notify for TRULY new ones
                 if (isFirstPostLoad) {
                     knownPostIds.addAll(posts.map { it.id })
@@ -81,21 +81,21 @@ class BoardViewModel(
                 val newPosts = posts.filter { post ->
                     val isNew = !knownPostIds.contains(post.id)
                     val isNotMe = post.author != currentUser.username
-                    val isInMyCommunity = post.isBroadcast || 
-                                         post.community.equals("General", ignoreCase = true) || 
+                    val isInMyCommunity = post.isBroadcast ||
+                                         post.community.equals("General", ignoreCase = true) ||
                                          currentUser.safeJoined().any { it.equals(post.community, ignoreCase = true) }
-                    
+
                     isNew && isNotMe && isInMyCommunity
                 }.sortedBy { it.timestamp }
 
                 newPosts.forEach { post ->
                     knownPostIds.add(post.id)
-                    
+
                     // MATCHING YOUR SNIPPET STYLE:
                     val displayCommunity = if (post.isBroadcast) "Global Board" else post.community
                     val snippetContent = if (post.content.length > 50) post.content.substring(0, 50) + "..." else post.content
-                    
-                    notificationHelper.showNotification(
+
+                    notificationHelper.showSimpleNotification(
                         title = "New Note in $displayCommunity",
                         message = "${post.author}: $snippetContent"
                     )
@@ -180,7 +180,7 @@ class BoardViewModel(
                 }
             }
             is BoardEvent.CreatePost -> {
-                createPost(event.title, event.content, event.type, event.color, event.timestamp, event.community, event.isBroadcast)
+                createPost(event.title, event.content, event.type, event.color, event.style, event.timestamp, event.community, event.isBroadcast)
             }
             
             is BoardEvent.RequestDeletePost -> {
@@ -247,17 +247,73 @@ class BoardViewModel(
             is BoardEvent.CancelJoinRequest -> {
                 cancelJoinRequest(event.requestId)
             }
+            is BoardEvent.RequestAcceptJoinRequest -> {
+                _state.value = _state.value.copy(joinRequestToApprove = event.request)
+            }
+            is BoardEvent.ConfirmAcceptJoinRequest -> {
+                state.value.joinRequestToApprove?.let {
+                    acceptJoinRequest(it.id, it.userId, it.community)
+                }
+                _state.value = _state.value.copy(joinRequestToApprove = null)
+            }
+            is BoardEvent.CancelAcceptJoinRequest -> {
+                _state.value = _state.value.copy(joinRequestToApprove = null)
+            }
+            is BoardEvent.RequestRejectJoinRequest -> {
+                _state.value = _state.value.copy(joinRequestToReject = event.request, rejectionReason = "")
+            }
+            is BoardEvent.ConfirmRejectJoinRequest -> {
+                state.value.joinRequestToReject?.let {
+                    rejectJoinRequest(it.id, state.value.rejectionReason)
+                }
+                _state.value = _state.value.copy(joinRequestToReject = null, rejectionReason = "")
+            }
+            is BoardEvent.CancelRejectJoinRequest -> {
+                _state.value = _state.value.copy(joinRequestToReject = null, rejectionReason = "")
+            }
             is BoardEvent.AcceptJoinRequest -> {
-                acceptJoinRequest(event.requestId, event.userId, event.community)
+                if (!state.value.isLoading) {
+                    acceptJoinRequest(event.requestId, event.userId, event.community)
+                }
             }
             is BoardEvent.RejectJoinRequest -> {
-                rejectJoinRequest(event.requestId)
+                if (!state.value.isLoading) {
+                    rejectJoinRequest(event.requestId)
+                }
+            }
+            is BoardEvent.RequestAcceptPost -> {
+                _state.value = _state.value.copy(postToApprove = event.post)
+            }
+            is BoardEvent.ConfirmAcceptPost -> {
+                state.value.postToApprove?.let {
+                    acceptPostRequest(it.id, it.community)
+                }
+                _state.value = _state.value.copy(postToApprove = null)
+            }
+            is BoardEvent.CancelAcceptPost -> {
+                _state.value = _state.value.copy(postToApprove = null)
+            }
+            is BoardEvent.RequestRejectPost -> {
+                _state.value = _state.value.copy(postToReject = event.post, rejectionReason = "")
+            }
+            is BoardEvent.ConfirmRejectPost -> {
+                state.value.postToReject?.let {
+                    rejectPostRequest(it.id, state.value.rejectionReason)
+                }
+                _state.value = _state.value.copy(postToReject = null, rejectionReason = "")
+            }
+            is BoardEvent.CancelRejectPost -> {
+                _state.value = _state.value.copy(postToReject = null, rejectionReason = "")
             }
             is BoardEvent.AcceptPostRequest -> {
-                acceptPostRequest(event.postId, event.community)
+                if (!state.value.isLoading) {
+                    acceptPostRequest(event.postId, event.community)
+                }
             }
             is BoardEvent.RejectPostRequest -> {
-                rejectPostRequest(event.postId)
+                if (!state.value.isLoading) {
+                    rejectPostRequest(event.postId)
+                }
             }
             is BoardEvent.CreateCommunity -> {
                 createCommunity(event.name, event.description)
@@ -296,6 +352,9 @@ class BoardViewModel(
             }
             is BoardEvent.ToggleUserSuspension -> {
                 toggleUserSuspension(event.userId)
+            }
+            is BoardEvent.UpdateRejectionReason -> {
+                _state.value = _state.value.copy(rejectionReason = event.reason)
             }
             is BoardEvent.Refresh -> {
                 viewModelScope.launch {
@@ -351,7 +410,7 @@ class BoardViewModel(
             when (val result = authRepository.setPassword(password)) {
                 is Resource.Success -> {
                     _state.value = _state.value.copy(isLoading = false, showSetPasswordDialog = false)
-                    notificationHelper.showNotification("Success", "Password set successfully. You can now use it to login.")
+                    notificationHelper.showSimpleNotification("Success", "Password set successfully. You can now use it to login.")
                 }
                 is Resource.Error -> {
                     _state.value = _state.value.copy(isLoading = false, error = result.message)
@@ -500,7 +559,7 @@ class BoardViewModel(
                 // Notify only if new manageable requests arrived
                 if (manageableRequests.size > prevManageableCount) {
                     val newCount = manageableRequests.size - prevManageableCount
-                    notificationHelper.showNotification(
+                    notificationHelper.showSimpleNotification(
                         "New Join Requests",
                         "You have $newCount new community join request(s) to review."
                     )
@@ -535,7 +594,7 @@ class BoardViewModel(
 
                 // Notify only if new manageable posts arrived for approval
                 if (manageablePosts.size > prevManageableCount) {
-                    notificationHelper.showNotification(
+                    notificationHelper.showSimpleNotification(
                         "Pending Posts",
                         "New posts are waiting for your approval."
                     )
@@ -573,14 +632,15 @@ class BoardViewModel(
     }
 
     private fun acceptJoinRequest(requestId: String, userId: String, community: String) {
+        if (requestId.isBlank()) return
         viewModelScope.launch {
             _state.value = _state.value.copy(isLoading = true)
             val result = approveJoinRequestUseCase(state.value.currentUser, requestId, userId, community)
             _state.value = _state.value.copy(isLoading = false)
             
             if (result is Resource.Success) {
-                notificationHelper.showNotification(
-                    "Request Accepted",
+                notificationHelper.showSimpleNotification(
+                    "Request Approved",
                     "You have accepted $userId's request to join $community."
                 )
             } else if (result is Resource.Error) {
@@ -589,26 +649,30 @@ class BoardViewModel(
         }
     }
 
-    private fun rejectJoinRequest(requestId: String) {
+    private fun rejectJoinRequest(requestId: String, reason: String? = null) {
+        if (requestId.isBlank()) return
         viewModelScope.launch {
             _state.value = _state.value.copy(isLoading = true)
-            val result = rejectJoinRequestUseCase(state.value.currentUser, requestId, state.value.joinRequests)
+            val result = rejectJoinRequestUseCase(state.value.currentUser, requestId, state.value.joinRequests, reason)
             _state.value = _state.value.copy(isLoading = false)
             
             if (result is Resource.Error) {
                 _state.value = _state.value.copy(error = result.message)
+            } else {
+                notificationHelper.showSimpleNotification("Request Rejected", "The join request has been rejected.")
             }
         }
     }
 
     private fun acceptPostRequest(postId: String, community: String) {
+        if (postId.isBlank()) return
         viewModelScope.launch {
             _state.value = _state.value.copy(isLoading = true)
             val result = approvePostUseCase(state.value.currentUser, postId, community)
             _state.value = _state.value.copy(isLoading = false)
 
             if (result is Resource.Success) {
-                notificationHelper.showNotification(
+                notificationHelper.showSimpleNotification(
                     "Post Approved",
                     "The post has been successfully approved and is now live."
                 )
@@ -618,14 +682,17 @@ class BoardViewModel(
         }
     }
 
-    private fun rejectPostRequest(postId: String) {
+    private fun rejectPostRequest(postId: String, reason: String? = null) {
+        if (postId.isBlank()) return
         viewModelScope.launch {
             _state.value = _state.value.copy(isLoading = true)
-            val result = rejectPostUseCase(state.value.currentUser, postId, state.value.pendingPosts)
+            val result = rejectPostUseCase(state.value.currentUser, postId, state.value.pendingPosts, reason)
             _state.value = _state.value.copy(isLoading = false)
 
             if (result is Resource.Error) {
                 _state.value = _state.value.copy(error = result.message)
+            } else {
+                notificationHelper.showSimpleNotification("Post Rejected", "The post has been rejected.")
             }
         }
     }
@@ -645,7 +712,7 @@ class BoardViewModel(
                     )
                     FirebaseMessaging.getInstance().subscribeToTopic(community.replace(" ", "_"))
                     getPosts(community)
-                    notificationHelper.showNotification(
+                    notificationHelper.showSimpleNotification(
                         "Community Joined",
                         "You have successfully joined $community"
                     )
@@ -674,7 +741,7 @@ class BoardViewModel(
                     )
                     FirebaseMessaging.getInstance().unsubscribeFromTopic(community.replace(" ", "_"))
                     getPosts("General")
-                    notificationHelper.showNotification(
+                    notificationHelper.showSimpleNotification(
                         "Community Left",
                         "You have left $community"
                     )
@@ -733,12 +800,25 @@ class BoardViewModel(
         }
     }
 
-    private fun createPost(title: String, content: String, type: PostType, color: Long, timestamp: Long, community: String, isBroadcast: Boolean = false) {
+    private fun createPost(title: String, content: String, type: PostType, color: Long, style: Int, timestamp: Long, community: String, isBroadcast: Boolean = false) {
         viewModelScope.launch {
             val currentUser = state.value.currentUser ?: return@launch
             _state.value = _state.value.copy(isLoading = true)
 
-            when (val result = createPostUseCase(currentUser, title, content, type, color, timestamp, community, isBroadcast)) {
+            // Create a post object locally to pass its values
+            val post = Post(
+                title = title,
+                content = content,
+                author = currentUser.username,
+                community = community,
+                type = type,
+                color = color,
+                style = style,
+                timestamp = timestamp,
+                isBroadcast = isBroadcast
+            )
+
+            when (val result = createPostUseCase(currentUser, post)) {
                 is Resource.Success -> {
                     val isBypassed = result.data == true
                     if (isBypassed) {
@@ -748,7 +828,7 @@ class BoardViewModel(
                             isLoading = false
                         )
                         getPosts(community)
-                        notificationHelper.showNotification("Post Created", "Your post has been published in $community")
+                        notificationHelper.showSimpleNotification("Post Created", "Your post has been published in $community")
                     } else {
                         _state.value = _state.value.copy(
                             error = "Your post has been submitted for approval.",

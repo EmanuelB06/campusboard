@@ -9,35 +9,21 @@ class CreatePostUseCase(
 ) {
     suspend operator fun invoke(
         user: User,
-        title: String,
-        content: String,
-        type: PostType,
-        color: Long,
-        timestamp: Long,
-        community: String,
-        isBroadcast: Boolean = false
+        post: Post
     ): Resource<Boolean> { // Returns true if bypassed (approved), false if pending
         if (user.isSuspended) {
             return Resource.Error("Your account is suspended. You cannot post.")
         }
         
-        val isBypassed = user.role == Role.SUPER_ADMIN || 
-                         (user.role == Role.ADMIN && user.safeManaged().contains(community)) ||
-                         user.safePermissions().contains("bypass_approval_$community")
+        val isBypassed = user.role == Role.SUPER_ADMIN ||
+                         (user.role == Role.ADMIN && user.safeManaged().contains(post.community)) ||
+                         user.safePermissions().contains("bypass_approval_${post.community}")
 
-        val post = Post(
-            title = title,
-            content = content,
-            author = user.username,
-            community = community,
-            type = type,
-            color = color,
-            timestamp = timestamp,
-            status = if (isBypassed) PostStatus.APPROVED else PostStatus.PENDING,
-            isBroadcast = isBroadcast
+        val finalPost = post.copy(
+            status = if (isBypassed) PostStatus.APPROVED else PostStatus.PENDING
         )
         
-        return when (val result = boardRepository.createPost(post)) {
+        return when (val result = boardRepository.createPost(finalPost)) {
             is Resource.Success -> Resource.Success(isBypassed)
             is Resource.Error -> Resource.Error(result.message ?: "Failed to create post")
             else -> Resource.Error("Unknown error")

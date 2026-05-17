@@ -247,6 +247,7 @@ class AuthRepositoryImpl(context: Context) : AuthRepository {
 
                 var updatedPermissions = user.safePermissions()
                 var updatedManaged = user.safeManaged()
+                var updatedJoined = user.safeJoined()
 
                 if (newRole == Role.ADMIN || newRole == Role.SUPER_ADMIN) {
                     if (communityToManage != null && !updatedManaged.contains(communityToManage)) {
@@ -263,6 +264,12 @@ class AuthRepositoryImpl(context: Context) : AuthRepository {
                     updatedPermissions = (updatedPermissions + defaultAdminPerms).distinct()
                 } else if (newRole == Role.USER) {
                     updatedManaged = emptyList()
+                    
+                    // Demoted users should only be in one community (usually the one from registration)
+                    if (updatedJoined.size > 1) {
+                        updatedJoined = updatedJoined.take(1)
+                    }
+
                     // When demoting to USER, we remove all administrative and management permissions.
                     val adminPermsToRemove = listOf(
                         "can_delete_community_posts", 
@@ -287,14 +294,16 @@ class AuthRepositoryImpl(context: Context) : AuthRepository {
                 transaction.update(userRef, mapOf(
                     "role" to newRole.name,
                     "managedCommunities" to updatedManaged,
-                    "permissions" to updatedPermissions
+                    "permissions" to updatedPermissions,
+                    "joinedCommunities" to updatedJoined
                 ))
 
                 if (_currentUserFlow.value?.id == userId) {
                     _currentUserFlow.value = _currentUserFlow.value?.copy(
                         role = newRole,
                         managedCommunities = updatedManaged,
-                        permissions = updatedPermissions
+                        permissions = updatedPermissions,
+                        joinedCommunities = updatedJoined
                     )
                 }
             }.await()

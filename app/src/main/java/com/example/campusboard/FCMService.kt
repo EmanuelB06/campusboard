@@ -20,6 +20,6 @@ class FCMService : FirebaseMessagingService() {
         val title = remoteMessage.notification?.title ?: remoteMessage.data["title"] ?: "New Note!"
         val body = remoteMessage.notification?.body ?: remoteMessage.data["body"] ?: "Check the board."
         
-        app.notificationHelper.showNotification(title, body)
+        app.notificationHelper.showSimpleNotification(title, body)
     }
 }

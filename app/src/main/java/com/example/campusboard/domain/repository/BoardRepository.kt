@@ -12,7 +12,7 @@ interface BoardRepository {
     fun getPendingPosts(): Flow<List<Post>>
     suspend fun createPost(post: Post): Resource<Unit>
     suspend fun deletePost(postId: String): Resource<Unit>
-    suspend fun updatePostStatus(postId: String, status: com.example.campusboard.domain.model.PostStatus): Resource<Unit>
+    suspend fun updatePostStatus(postId: String, status: com.example.campusboard.domain.model.PostStatus, reason: String? = null): Resource<Unit>
     suspend fun joinCommunity(userId: String, community: String): Resource<Unit>
     
     // Join Requests
@@ -20,7 +20,7 @@ interface BoardRepository {
     fun getPendingJoinRequests(community: String): Flow<List<JoinRequest>>
     fun getAllPendingJoinRequests(): Flow<List<JoinRequest>>
     fun getJoinRequestsForUser(userId: String): Flow<List<JoinRequest>>
-    suspend fun updateJoinRequestStatus(requestId: String, status: String): Resource<Unit>
+    suspend fun updateJoinRequestStatus(requestId: String, status: String, reason: String? = null): Resource<Unit>
     suspend fun cancelJoinRequest(requestId: String): Resource<Unit>
 
     // Communities

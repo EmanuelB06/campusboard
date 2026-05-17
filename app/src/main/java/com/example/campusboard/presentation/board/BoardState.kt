@@ -26,5 +26,10 @@ data class BoardState(
     val membersToView: List<User> = emptyList(),
     val communityWarning: Pair<String, String>? = null, // userId, community
     val communityToEdit: Community? = null,
-    val showSetPasswordDialog: Boolean = false
+    val showSetPasswordDialog: Boolean = false,
+    val postToApprove: Post? = null,
+    val postToReject: Post? = null,
+    val joinRequestToApprove: JoinRequest? = null,
+    val joinRequestToReject: JoinRequest? = null,
+    val rejectionReason: String = ""
 )
